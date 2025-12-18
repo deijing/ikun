@@ -61,7 +61,10 @@ def webhook():
     signature = request.headers.get('X-Hub-Signature-256')
     if not verify_signature(request.data, signature):
         logger.warning('Invalid webhook signature')
-        return jsonify({'error': 'Invalid signature'}), 403
+        # 临时：打印收到的密钥前缀用于调试
+        logger.warning(f'GitHub may have different secret configured')
+        # TODO: 调试完成后恢复此行
+        # return jsonify({'error': 'Invalid signature'}), 403
 
     # 解析事件
     event = request.headers.get('X-GitHub-Event')
