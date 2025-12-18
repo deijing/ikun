@@ -42,7 +42,7 @@ sleep 10
 
 # 4. 健康检查
 log "执行健康检查..."
-if curl -s http://localhost:8000/api/v1/health > /dev/null 2>&1; then
+if curl -s http://localhost:8000/health | grep -q "ok"; then
     log "✅ 后端服务正常"
 else
     log "⚠️ 后端服务可能还在启动中"
