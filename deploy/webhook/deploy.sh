@@ -30,11 +30,10 @@ log "拉取最新代码..."
 git fetch origin main
 git reset --hard origin/main
 
-# 2. 重新构建并启动容器
+# 2. 重新构建并启动容器（滚动更新，减少停机时间）
 log "重新构建 Docker 容器..."
-$DOCKER_COMPOSE down
 $DOCKER_COMPOSE build --no-cache
-$DOCKER_COMPOSE up -d
+$DOCKER_COMPOSE up -d --force-recreate
 
 # 3. 等待服务启动并健康检查
 log "等待服务启动..."
