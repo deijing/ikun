@@ -13,7 +13,15 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
+# 检测 docker compose 命令
+if docker compose version > /dev/null 2>&1; then
+    DOCKER_COMPOSE="docker compose"
+else
+    DOCKER_COMPOSE="docker-compose"
+fi
+
 log "========== 开始部署 =========="
+log "使用命令: $DOCKER_COMPOSE"
 
 cd "$PROJECT_DIR"
 
@@ -24,9 +32,9 @@ git reset --hard origin/main
 
 # 2. 重新构建并启动容器
 log "重新构建 Docker 容器..."
-docker compose down
-docker compose build --no-cache
-docker compose up -d
+$DOCKER_COMPOSE down
+$DOCKER_COMPOSE build --no-cache
+$DOCKER_COMPOSE up -d
 
 # 3. 等待服务启动
 log "等待服务启动..."
