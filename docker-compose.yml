@@ -4,10 +4,10 @@ services:
     image: mysql:8.0
     container_name: chicken_king_db
     environment:
-      MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: chicken_king
-      MYSQL_USER: chicken
-      MYSQL_PASSWORD: password
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-chicken_king}
+      MYSQL_USER: ${MYSQL_USER:-chicken}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
     ports:
       - "3306:3306"
     volumes:
@@ -37,8 +37,16 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=mysql+aiomysql://root:password@db:3306/chicken_king
+      - DATABASE_URL=mysql+aiomysql://root:${MYSQL_ROOT_PASSWORD:-password}@db:3306/${MYSQL_DATABASE:-chicken_king}
       - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - FRONTEND_URL=${FRONTEND_URL:-http://127.0.0.1:5173}
+      - LINUX_DO_CLIENT_ID=${LINUX_DO_CLIENT_ID:-}
+      - LINUX_DO_CLIENT_SECRET=${LINUX_DO_CLIENT_SECRET:-}
+      - LINUX_DO_REDIRECT_URI=${LINUX_DO_REDIRECT_URI:-}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
     depends_on:
       db:
         condition: service_healthy
@@ -52,6 +60,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${VITE_API_URL:-/api/v1}
     container_name: chicken_king_frontend
     ports:
       - "5174:80"
