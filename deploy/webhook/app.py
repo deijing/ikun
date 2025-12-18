@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 def verify_signature(payload: bytes, signature: str) -> bool:
     """验证 GitHub Webhook 签名"""
     if not signature:
-        logger.warning(f'No signature provided')
         return False
 
     expected = 'sha256=' + hmac.new(
@@ -40,10 +39,6 @@ def verify_signature(payload: bytes, signature: str) -> bool:
         payload,
         hashlib.sha256
     ).hexdigest()
-
-    logger.info(f'Received signature: {signature[:20]}...')
-    logger.info(f'Expected signature: {expected[:20]}...')
-    logger.info(f'Secret length: {len(WEBHOOK_SECRET)}, starts with: {WEBHOOK_SECRET[:8]}...')
 
     return hmac.compare_digest(expected, signature)
 
@@ -61,10 +56,7 @@ def webhook():
     signature = request.headers.get('X-Hub-Signature-256')
     if not verify_signature(request.data, signature):
         logger.warning('Invalid webhook signature')
-        # 临时：打印收到的密钥前缀用于调试
-        logger.warning(f'GitHub may have different secret configured')
-        # TODO: 调试完成后恢复此行
-        # return jsonify({'error': 'Invalid signature'}), 403
+        return jsonify({'error': 'Invalid signature'}), 403
 
     # 解析事件
     event = request.headers.get('X-GitHub-Event')
