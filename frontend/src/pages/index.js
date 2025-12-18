@@ -1,0 +1,6 @@
+export { default as HomePage } from './HomePage'
+export { default as SubmissionsPage } from './SubmissionsPage'
+export { default as RankingPage } from './RankingPage'
+export { default as SubmitPage } from './SubmitPage'
+export { default as LoginPage } from './LoginPage'
+export { default as RegisterPage } from './RegisterPage'
