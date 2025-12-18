@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # MySQL 数据库
   db:
@@ -94,6 +92,31 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+
+  # Nginx 反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: chicken_king_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - default
+      - webhook_network
+
+networks:
+  default:
+  webhook_network:
+    external: true
+    name: chicken-king_chicken_king_network
 
 volumes:
   mysql_data:
