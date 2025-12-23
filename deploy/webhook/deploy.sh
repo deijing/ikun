@@ -334,16 +334,17 @@ fi
 MYSQL_ROOT_PASSWORD="${EXISTING_MYSQL_ROOT_PASSWORD:-password}"
 MYSQL_PASSWORD="${EXISTING_MYSQL_PASSWORD:-password}"
 
-cat > "$ENV_FILE" << ENVEOF
+# 先写入固定内容的模板
+cat > "$ENV_FILE" << 'ENVEOF'
 # ============================================================================
 # 生产环境配置 - 由部署脚本自动生成
 # ============================================================================
 
 # MySQL 数据库（注意：修改密码需要删除 mysql 数据卷重建）
-MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+MYSQL_ROOT_PASSWORD=__MYSQL_ROOT_PASSWORD__
 MYSQL_DATABASE=chicken_king
 MYSQL_USER=chicken
-MYSQL_PASSWORD=$MYSQL_PASSWORD
+MYSQL_PASSWORD=__MYSQL_PASSWORD__
 
 # 应用密钥（用于 JWT 签名）
 SECRET_KEY=a3f8c9d2e5b7a1f4c8d0e3b6a9f2c5d8e1b4a7f0c3d6e9b2a5f8c1d4e7b0a3f6
@@ -367,6 +368,12 @@ VITE_API_URL=/api/v1
 # Umami 统计
 UMAMI_APP_SECRET=chicken_king_umami_secret_2024
 ENVEOF
+
+# 使用 sed 安全地替换密码（避免特殊字符问题）
+# 使用 @ 作为分隔符而不是 / 以避免密码中的 / 字符冲突
+sed -i.bak "s@__MYSQL_ROOT_PASSWORD__@${MYSQL_ROOT_PASSWORD}@g" "$ENV_FILE"
+sed -i.bak "s@__MYSQL_PASSWORD__@${MYSQL_PASSWORD}@g" "$ENV_FILE"
+rm -f "${ENV_FILE}.bak"
 
 log "✅ 生产环境配置已生成"
 
