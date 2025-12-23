@@ -357,12 +357,9 @@ ENVEOF
 
 log "✅ 生产环境配置已生成"
 
-# 3. 重新构建并启动容器
-log "重新构建 Docker 容器..."
-$DOCKER_COMPOSE build --no-cache
-
-log "启动容器..."
-$DOCKER_COMPOSE up -d --force-recreate
+# 3. 重启容器（代码已通过 volume 挂载，无需重新构建）
+log "重启容器以应用最新代码..."
+$DOCKER_COMPOSE up -d
 
 # 4. 容器重启后执行数据库迁移（健康检查前）
 log "执行数据库迁移..."
