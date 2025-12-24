@@ -74,6 +74,9 @@ services:
       - DATABASE_URL=mysql+aiomysql://${MYSQL_USER:-chicken}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-chicken_king}
       - REDIS_URL=redis://redis:6379/0
       - FRONTEND_URL=${FRONTEND_URL}
+      - WORKER_API_TOKEN=${WORKER_API_TOKEN}
+      - PROJECT_DOMAIN_SUFFIX=${PROJECT_DOMAIN_SUFFIX:-local}
+      - PROJECT_DOMAIN_TEMPLATE=${PROJECT_DOMAIN_TEMPLATE:-project-{submission_id}.{suffix}}
       - LINUX_DO_CLIENT_ID=${LINUX_DO_CLIENT_ID}
       - LINUX_DO_CLIENT_SECRET=${LINUX_DO_CLIENT_SECRET}
       - LINUX_DO_REDIRECT_URI=${LINUX_DO_REDIRECT_URI}
@@ -92,6 +95,49 @@ services:
       - "8000"
 
   # ==========================================================================
+  # Worker 服务（部署流程）
+  # ==========================================================================
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: chicken_king_worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment:
+      - DEBUG=false
+      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=mysql+aiomysql://${MYSQL_USER:-chicken}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-chicken_king}
+      - REDIS_URL=redis://redis:6379/0
+      - WORKER_API_TOKEN=${WORKER_API_TOKEN}
+      - WORKER_API_BASE_URL=http://backend:8000
+      - WORKER_HEALTHCHECK_ENABLED=${WORKER_HEALTHCHECK_ENABLED:-false}
+      - WORKER_DOCKER_HOST=${WORKER_DOCKER_HOST:-unix:///var/run/docker.sock}
+      - WORKER_DEPLOY_NETWORK=${WORKER_DEPLOY_NETWORK:-}
+      - WORKER_PROJECT_PORT=${WORKER_PROJECT_PORT:-8080}
+      - WORKER_CONTAINER_MEMORY_LIMIT=${WORKER_CONTAINER_MEMORY_LIMIT:-1g}
+      - WORKER_CONTAINER_CPU_LIMIT=${WORKER_CONTAINER_CPU_LIMIT:-1.0}
+      - WORKER_CONTAINER_PIDS_LIMIT=${WORKER_CONTAINER_PIDS_LIMIT:-256}
+      - WORKER_CONTAINER_LOG_MAX_SIZE=${WORKER_CONTAINER_LOG_MAX_SIZE:-10m}
+      - WORKER_CONTAINER_LOG_MAX_FILE=${WORKER_CONTAINER_LOG_MAX_FILE:-3}
+      - PROJECT_DOMAIN_SUFFIX=${PROJECT_DOMAIN_SUFFIX:-local}
+      - PROJECT_DOMAIN_TEMPLATE=${PROJECT_DOMAIN_TEMPLATE:-project-{submission_id}.{suffix}}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    user: root
+    networks:
+      - chicken_king_network
+    healthcheck:
+      disable: true
+
+  # ==========================================================================
   # React 前端 (Nginx)
   # ==========================================================================
   frontend:
@@ -106,6 +152,22 @@ services:
       - chicken_king_network
     expose:
       - "80"
+
+  # ==========================================================================
+  # Traefik 项目网关
+  # ==========================================================================
+  traefik:
+    image: traefik:v2.10
+    container_name: chicken_king_traefik
+    restart: unless-stopped
+    command:
+      - --entrypoints.web.address=:8081
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - chicken_king_network
 
   # ==========================================================================
   # Nginx 反向代理 (入口)
@@ -124,10 +186,11 @@ services:
     depends_on:
       - frontend
       - backend
+      - traefik
     networks:
       - chicken_king_network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/health"]
       interval: 30s
       timeout: 10s
       retries: 3

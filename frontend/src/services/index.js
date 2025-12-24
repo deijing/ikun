@@ -27,12 +27,31 @@ export const contestApi = {
   list: () => api.get('/contests'),
   get: (id) => api.get(`/contests/${id}`),
   signup: (id) => api.post(`/contests/${id}/signup`),
-  getRanking: (id) => api.get(`/contests/${id}/ranking`),
+  getRanking: (id, params) => api.get(`/contests/${id}/ranking`, { params }),
+  getRankingDetail: (id, projectId) => api.get(`/contests/${id}/ranking/${projectId}`),
+  getInteractionLeaderboard: (id, params) => api.get(`/contests/${id}/interaction-leaderboard`, { params }),
+}
+
+/**
+ * 作品部署相关 API
+ */
+export const projectApi = {
+  list: (params) => api.get('/projects', { params }),
+  create: (data) => api.post('/projects', data),
+  update: (projectId, data) => api.patch(`/projects/${projectId}`, data),
+  submitImage: (projectId, data) => api.post(`/projects/${projectId}/submissions`, data),
+  listSubmissions: (projectId, params) => api.get(`/projects/${projectId}/submissions`, { params }),
+  getCurrentSubmission: (projectId) => api.get(`/projects/${projectId}/submissions/current`),
+  getAccess: (projectId) => api.get(`/projects/${projectId}/access`),
+  like: (projectId) => api.post(`/projects/${projectId}/like`),
+  unlike: (projectId) => api.delete(`/projects/${projectId}/like`),
+  favorite: (projectId) => api.post(`/projects/${projectId}/favorite`),
+  unfavorite: (projectId) => api.delete(`/projects/${projectId}/favorite`),
 }
 
 /**
  * 作品提交相关 API
- * 支持5种必填材料：项目源码、演示视频、项目文档、API调用证明、参赛报名表
+ * 支持5种材料：项目源码、演示视频（可选）、项目文档、API调用证明、参赛报名表
  */
 export const submissionApi = {
   // 获取作品列表
@@ -235,6 +254,14 @@ export const adminApi2 = {
   adjustPoints: (userId, data) => api.post(`/admin/users/${userId}/points`, data),
   getUserPointsHistory: (userId, params) => api.get(`/admin/users/${userId}/points-history`, { params }),
 
+  // 作品评审分配
+  getProject: (projectId) => api.get(`/projects/${projectId}`),
+  getProjectReviewers: (projectId) => api.get(`/admin/projects/${projectId}/reviewers`),
+  assignProjectReviewers: (projectId, reviewerIds) =>
+    api.post(`/admin/projects/${projectId}/reviewers`, { reviewer_ids: reviewerIds }),
+  removeProjectReviewer: (projectId, reviewerId) =>
+    api.delete(`/admin/projects/${projectId}/reviewers/${reviewerId}`),
+
   // 签到配置
   getSigninConfig: () => api.get('/admin/signin/config'),
   createMilestone: (data) => api.post('/admin/signin/milestones', data),
@@ -309,21 +336,19 @@ export const slotMachineApi = {
 }
 
 /**
- * 评审中心 API
+ * 评审中心 API（Project 体系）
  */
 export const reviewCenterApi = {
   // 获取评审员统计
   getStats: () => api.get('/review-center/stats'),
   // 获取待评审作品列表
-  getSubmissions: (params) => api.get('/review-center/submissions', { params }),
+  getSubmissions: (params) => api.get('/review-center/projects', { params }),
   // 获取作品详情
-  getSubmission: (id) => api.get(`/review-center/submissions/${id}`),
+  getSubmission: (id) => api.get(`/review-center/projects/${id}`),
   // 提交/更新评分
-  submitReview: (submissionId, data) => api.put(`/review-center/submissions/${submissionId}/review`, data),
+  submitReview: (projectId, data) => api.post(`/review-center/projects/${projectId}/score`, data),
   // 删除评分
-  deleteReview: (submissionId) => api.delete(`/review-center/submissions/${submissionId}/review`),
-  // 管理员：查看作品所有评分明细
-  getSubmissionReviews: (submissionId) => api.get(`/review-center/admin/submissions/${submissionId}/reviews`),
+  deleteReview: (projectId) => api.delete(`/review-center/projects/${projectId}/score`),
 }
 
 /**

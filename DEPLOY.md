@@ -61,6 +61,18 @@ nano .env.production
 | `LINUX_DO_CLIENT_SECRET` | Linux.do OAuth | 从 connect.linux.do 获取 |
 | `LINUX_DO_REDIRECT_URI` | OAuth 回调地址 | `https://your-domain.com/api/v1/auth/linuxdo/callback` |
 
+### 3.5 数据库迁移（重要）
+
+- 新增互动表迁移：`backend/sql/029_project_interactions.sql`
+- 若使用 `production_clean_db.sql` 或 `production_initial_db.sql` 初始化，无需额外执行
+- 旧库升级时需手动执行该迁移脚本
+
+### 3.6 部署前检查清单
+
+- `.env.production` 已更新必要配置
+- Nginx 证书与域名解析已准备
+- 数据库迁移脚本已执行或初始化脚本已替换
+
 ### 4. 配置域名和 SSL
 
 #### 方式一：使用 Let's Encrypt（推荐）

@@ -4,19 +4,20 @@
 提供作品提交的完整功能，包括：
 - CRUD 操作：创建草稿、更新、获取、删除
 - 附件上传：init/complete 两步上传模式
-- 材料校验：校验5种必填材料完整性
+- 材料校验：校验必填材料完整性（演示视频可选）
 - 最终提交：强校验后锁定作品
 - 管理审核：通过/拒绝作品
 
-5种必填材料：
+作品材料说明：
 1. 项目源码 - GitHub/Gitee 仓库链接（必须 Public）
-2. 演示视频 - MP4/AVI，3-5分钟
-3. 项目文档 - Markdown 格式
-4. API调用证明 - 截图 + 日志文件
-5. 参赛报名表 - 关联 registrations 表
+2. 演示视频 - MP4/AVI，3-5分钟（可选）
+3. 项目文档 - Markdown 格式（必填）
+4. API调用证明 - 截图 + 日志文件（必填）
+5. 参赛报名表 - 关联 registrations 表（必填）
 """
 import hashlib
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -71,8 +72,8 @@ logger = logging.getLogger(__name__)
 # 配置常量
 # ============================================================================
 
-# 上传根目录
-UPLOAD_ROOT = Path("uploads") / "submissions"
+# 上传根目录（默认放在容器内可写目录）
+UPLOAD_ROOT = Path(os.getenv("UPLOAD_ROOT", "/app/app/uploads")) / "submissions"
 
 # 各类型附件的最大文件大小（字节）
 MAX_SIZE_BY_TYPE: dict[str, int] = {
@@ -297,6 +298,19 @@ async def require_registration(
     return registration
 
 
+async def require_approved_registration(
+    db: AsyncSession,
+    contest_id: int,
+    user_id: int,
+    message: str = "报名未审核通过，无法提交作品",
+) -> Registration:
+    """要求报名已通过审核"""
+    registration = await require_registration(db, contest_id, user_id)
+    if registration.status != RegistrationStatus.APPROVED.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+    return registration
+
+
 async def get_submission_or_404(
     db: AsyncSession,
     submission_id: int,
@@ -358,7 +372,7 @@ async def validate_submission_materials(
     submission: Submission,
 ) -> SubmissionValidateResponse:
     """
-    校验作品提交的5种必填材料
+    校验作品提交的必填材料（演示视频可选）
 
     Returns:
         SubmissionValidateResponse: 校验结果
@@ -403,13 +417,22 @@ async def validate_submission_materials(
         ))
     else:
         doc = submission.project_doc_md.strip()
-        # 检查必要章节（简单正则）
+        # 检查必要章节（兼容常见标题与关键词）
+        def has_doc_section(text: str, keywords: tuple[str, ...]) -> bool:
+            lower = text.lower()
+            for keyword in keywords:
+                keyword_lower = keyword.lower()
+                pattern = rf"(?m)^\s*#+\s*{re.escape(keyword_lower)}"
+                if re.search(pattern, lower):
+                    return True
+            return any(keyword.lower() in lower for keyword in keywords)
+
         required_sections = [
-            ("安装", "MISSING_INSTALL_SECTION", "项目文档缺少「安装步骤」章节"),
-            ("使用", "MISSING_USAGE_SECTION", "项目文档缺少「使用说明」章节"),
+            (("安装", "部署", "installation", "install"), "MISSING_INSTALL_SECTION", "项目文档缺少「安装步骤」章节"),
+            (("使用", "操作", "运行", "启动", "usage", "quick start", "quickstart"), "MISSING_USAGE_SECTION", "项目文档缺少「使用说明」章节"),
         ]
-        for keyword, code, message in required_sections:
-            if keyword not in doc:
+        for keywords, code, message in required_sections:
+            if not has_doc_section(doc, keywords):
                 errors.append(ValidationError(
                     field="project_doc_md",
                     code=code,
@@ -460,15 +483,7 @@ async def validate_submission_materials(
         "total_count": len(uploaded_attachments),
     }
 
-    # 4.1 演示视频（必须至少1个）
-    if AttachmentType.DEMO_VIDEO.value not in uploaded_types:
-        errors.append(ValidationError(
-            field="demo_video",
-            code="REQUIRED",
-            message="演示视频（MP4/AVI，3-5分钟）必传"
-        ))
-
-    # 4.2 API调用证明截图（必须至少1个）
+    # 4.1 API调用证明截图（必须至少1张）
     if AttachmentType.API_SCREENSHOT.value not in uploaded_types:
         errors.append(ValidationError(
             field="api_screenshot",
@@ -476,7 +491,7 @@ async def validate_submission_materials(
             message="API调用证明截图必传（至少1张）"
         ))
 
-    # 4.3 API调用证明日志（必须至少1个）
+    # 4.2 API调用证明日志（必须至少1个）
     if AttachmentType.API_LOG.value not in uploaded_types:
         errors.append(ValidationError(
             field="api_log",
@@ -1008,7 +1023,7 @@ async def delete_attachment(
     "/{submission_id}/validate",
     response_model=SubmissionValidateResponse,
     summary="校验作品材料",
-    description="校验作品的5种必填材料是否完整。",
+    description="校验作品的必填材料是否完整（演示视频可选）。",
 )
 async def validate_submission(
     submission_id: int,
@@ -1066,6 +1081,12 @@ async def finalize_submission(
     submission = await get_submission_or_404(db, submission_id, load_attachments=True)
     ensure_owner(submission, current_user)
     ensure_editable(submission)
+    await require_approved_registration(
+        db,
+        submission.contest_id,
+        current_user.id,
+        message="报名未审核通过，无法最终提交",
+    )
 
     # 强制校验
     validation = await validate_submission_materials(db, submission)

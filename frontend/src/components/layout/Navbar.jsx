@@ -82,6 +82,7 @@ const NAV_ITEMS = [
   { path: '/', label: '首页' },
   { path: '/submissions', label: '作品展示' },
   { path: '/ranking', label: '排行榜' },
+  { path: '/announcement', label: '公示', icon: Award },
   { path: '/participants', label: '参赛选手' },
   { path: '/activity', label: '疯狂娱乐城', icon: Gift, highlight: true },
 ]

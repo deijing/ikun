@@ -114,6 +114,9 @@ docker exec -i chicken_king_db mysql -uroot -ppassword chicken_king < /opt/chick
 
 # 或导入初始结构
 docker exec -i chicken_king_db mysql -uroot -ppassword chicken_king < /opt/chicken-king/backend/sql/schema.sql
+
+# 若为旧库升级，需执行互动表迁移
+docker exec -i chicken_king_db mysql -uroot -ppassword chicken_king < /opt/chicken-king/backend/sql/029_project_interactions.sql
 ```
 
 ### 6. 配置 GitHub Webhook

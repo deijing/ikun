@@ -18,6 +18,12 @@ USE `chicken_king`;
 -- 删除旧表（按依赖顺序）
 -- ============================================================================
 DROP TABLE IF EXISTS `votes`;
+DROP TABLE IF EXISTS `project_favorites`;
+DROP TABLE IF EXISTS `project_likes`;
+DROP TABLE IF EXISTS `project_reviews`;
+DROP TABLE IF EXISTS `project_review_assignments`;
+DROP TABLE IF EXISTS `project_submissions`;
+DROP TABLE IF EXISTS `projects`;
 DROP TABLE IF EXISTS `submissions`;
 DROP TABLE IF EXISTS `registrations`;
 DROP TABLE IF EXISTS `contests`;
@@ -147,6 +153,164 @@ CREATE TABLE `submissions` (
   CONSTRAINT `fk_submissions_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_submissions_contest_id` FOREIGN KEY (`contest_id`) REFERENCES `contests` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品提交表';
+
+-- ============================================================================
+-- 作品表（部署体系）
+-- ============================================================================
+CREATE TABLE `projects` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+  `contest_id` INT NOT NULL COMMENT '关联比赛ID',
+  `user_id` INT NOT NULL COMMENT '创建者ID',
+
+  `title` VARCHAR(200) NOT NULL COMMENT '作品名称',
+  `summary` VARCHAR(500) NULL COMMENT '作品简介',
+  `description` TEXT NULL COMMENT '作品详情',
+  `repo_url` VARCHAR(500) NULL COMMENT '开源仓库地址',
+  `cover_image_url` VARCHAR(500) NULL COMMENT '封面图',
+  `screenshot_urls` JSON NULL COMMENT '截图列表',
+  `readme_url` VARCHAR(500) NULL COMMENT 'README 链接',
+  `demo_url` VARCHAR(500) NULL COMMENT '演示地址',
+
+  `status` ENUM('draft', 'submitted', 'online', 'offline') NOT NULL DEFAULT 'draft' COMMENT '作品状态',
+  `current_submission_id` INT NULL COMMENT '当前线上 submission_id',
+
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_projects_contest_user` (`contest_id`, `user_id`),
+  KEY `ix_projects_contest` (`contest_id`),
+  KEY `ix_projects_user` (`user_id`),
+  KEY `ix_projects_status` (`status`),
+  CONSTRAINT `fk_projects_contest_id` FOREIGN KEY (`contest_id`) REFERENCES `contests` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_projects_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品表';
+
+-- ============================================================================
+-- 作品部署提交表
+-- ============================================================================
+CREATE TABLE `project_submissions` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+  `project_id` INT NOT NULL COMMENT '关联作品ID',
+  `contest_id` INT NOT NULL COMMENT '关联比赛ID',
+  `user_id` INT NOT NULL COMMENT '提交者ID',
+
+  `image_ref` VARCHAR(500) NOT NULL COMMENT '镜像引用（含 digest）',
+  `image_registry` VARCHAR(100) NULL COMMENT '镜像仓库域名',
+  `image_repo` VARCHAR(300) NULL COMMENT '镜像仓库路径',
+  `image_digest` VARCHAR(128) NULL COMMENT '镜像 digest',
+
+  `status` ENUM('created', 'queued', 'pulling', 'deploying', 'healthchecking', 'online', 'failed')
+    NOT NULL DEFAULT 'created' COMMENT '提交状态',
+  `status_message` VARCHAR(500) NULL COMMENT '状态说明',
+  `error_code` VARCHAR(100) NULL COMMENT '错误码',
+  `log` LONGTEXT NULL COMMENT '部署日志',
+  `domain` VARCHAR(255) NULL COMMENT '访问域名',
+  `status_history` JSON NULL COMMENT '状态历史',
+
+  `submitted_at` DATETIME(6) NULL COMMENT '提交时间',
+  `online_at` DATETIME(6) NULL COMMENT '上线时间',
+  `failed_at` DATETIME(6) NULL COMMENT '失败时间',
+
+  PRIMARY KEY (`id`),
+  KEY `ix_project_submissions_project` (`project_id`),
+  KEY `ix_project_submissions_contest` (`contest_id`),
+  KEY `ix_project_submissions_user` (`user_id`),
+  KEY `ix_project_submissions_status` (`status`),
+  KEY `ix_project_submissions_submitted` (`submitted_at`),
+  CONSTRAINT `fk_project_submissions_project_id` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_submissions_contest_id` FOREIGN KEY (`contest_id`) REFERENCES `contests` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_submissions_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品部署提交表';
+
+-- ============================================================================
+-- 作品评审分配表
+-- ============================================================================
+CREATE TABLE `project_review_assignments` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+  `project_id` INT NOT NULL COMMENT '关联作品ID',
+  `reviewer_id` INT NOT NULL COMMENT '评审员用户ID',
+
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_project_review_assignment` (`project_id`, `reviewer_id`),
+  KEY `ix_project_review_assignments_project` (`project_id`),
+  KEY `ix_project_review_assignments_reviewer` (`reviewer_id`),
+  CONSTRAINT `fk_project_review_assignments_project_id`
+    FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_review_assignments_reviewer_id`
+    FOREIGN KEY (`reviewer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品评审分配表';
+
+-- ============================================================================
+-- 作品评审评分表
+-- ============================================================================
+CREATE TABLE `project_reviews` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+  `project_id` INT NOT NULL COMMENT '关联作品ID',
+  `reviewer_id` INT NOT NULL COMMENT '评审员用户ID',
+  `score` SMALLINT NOT NULL COMMENT '评分(1-100)',
+  `comment` VARCHAR(2000) NULL COMMENT '评审意见(可选)',
+
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_project_reviewer` (`project_id`, `reviewer_id`),
+  KEY `ix_project_reviews_project` (`project_id`),
+  KEY `ix_project_reviews_reviewer` (`reviewer_id`),
+  CONSTRAINT `fk_project_reviews_project_id`
+    FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_reviews_reviewer_id`
+    FOREIGN KEY (`reviewer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品评审评分表';
+
+-- ============================================================================
+-- 作品点赞表
+-- ============================================================================
+CREATE TABLE `project_likes` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+  `project_id` INT NOT NULL COMMENT '关联作品ID',
+  `user_id` INT NOT NULL COMMENT '点赞用户ID',
+
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_project_like` (`project_id`, `user_id`),
+  KEY `ix_project_likes_project` (`project_id`),
+  KEY `ix_project_likes_user` (`user_id`),
+  CONSTRAINT `fk_project_likes_project_id`
+    FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_likes_user_id`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品点赞表';
+
+-- ============================================================================
+-- 作品收藏表
+-- ============================================================================
+CREATE TABLE `project_favorites` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+  `project_id` INT NOT NULL COMMENT '关联作品ID',
+  `user_id` INT NOT NULL COMMENT '收藏用户ID',
+
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_project_favorite` (`project_id`, `user_id`),
+  KEY `ix_project_favorites_project` (`project_id`),
+  KEY `ix_project_favorites_user` (`user_id`),
+  CONSTRAINT `fk_project_favorites_project_id`
+    FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_favorites_user_id`
+    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品收藏表';
 
 -- ============================================================================
 -- 投票表

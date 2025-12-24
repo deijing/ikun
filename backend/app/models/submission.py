@@ -2,7 +2,7 @@
 作品提交模型
 
 定义作品提交表和附件表的数据模型。
-支持5种必填材料：项目源码、演示视频、项目文档、API调用证明、参赛报名表。
+支持5种材料：项目源码、演示视频（可选）、项目文档、API调用证明、参赛报名表。
 """
 import enum
 from typing import TYPE_CHECKING
@@ -62,9 +62,9 @@ class Submission(BaseModel):
     作品提交表
 
     每个用户在每个比赛只能提交一个作品。
-    作品提交需要包含5种必填材料（finalize时强校验）：
+    作品提交需要包含必填材料（finalize时强校验，演示视频可选）：
     1. 项目源码 - repo_url 字段
-    2. 演示视频 - 通过 attachments 关联
+    2. 演示视频（可选） - 通过 attachments 关联
     3. 项目文档 - project_doc_md 字段
     4. API调用证明 - 通过 attachments 关联（截图+日志）
     5. 参赛报名表 - 通过 registration_id 关联

@@ -101,6 +101,18 @@ const STATUS_CONFIG = {
   },
 }
 
+const CONTEST_ID = 1
+
+/**
+ * 作品状态展示文案
+ */
+const PROJECT_STATUS_LABELS = {
+  draft: '草稿',
+  submitted: '已提交',
+  online: '已上线',
+  offline: '已下线',
+}
+
 /**
  * 格式化日期为 YYYY-MM-DD
  */
@@ -547,6 +559,7 @@ export default function ContestantCenterPage() {
   const [copied, setCopied] = useState(false)
   const [exportingPDF, setExportingPDF] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
+  const [projectInfo, setProjectInfo] = useState(null)
 
   // 为展示页 modal 构建完整的参赛者数据
   const participantData = useMemo(() => {
@@ -590,7 +603,7 @@ export default function ContestantCenterPage() {
       navigate('/login')
       return
     }
-    checkStatus(1).finally(() => setLoading(false))
+    checkStatus(CONTEST_ID).finally(() => setLoading(false))
   }, [hydrated, token, checkStatus, navigate])
 
   useEffect(() => {
@@ -626,6 +639,26 @@ export default function ContestantCenterPage() {
     }
     loadData()
   }, [registration?.id, registration?.repo_url])
+
+  useEffect(() => {
+    if (!token || !registration?.id) return
+    let active = true
+
+    const loadProject = async () => {
+      try {
+        const res = await api.get('/projects', { params: { contest_id: CONTEST_ID, mine: true } })
+        const project = res?.items?.[0] || null
+        if (active) setProjectInfo(project)
+      } catch {
+        if (active) setProjectInfo(null)
+      }
+    }
+
+    loadProject()
+    return () => {
+      active = false
+    }
+  }, [token, registration?.id])
 
   const handleRefresh = async () => {
     if (!registration?.id) return
@@ -854,6 +887,7 @@ export default function ContestantCenterPage() {
   }
 
   const planProgress = useMemo(() => parsePlanProgress(registration?.plan), [registration?.plan])
+  const projectStatusLabel = projectInfo?.status ? (PROJECT_STATUS_LABELS[projectInfo.status] || '未知') : '-'
   const statusConfig = STATUS_CONFIG[status] || STATUS_CONFIG.submitted
   const StatusIcon = statusConfig.icon
 
@@ -1274,6 +1308,23 @@ export default function ContestantCenterPage() {
                     <span className="text-sm">提交作品</span>
                   </Button>
                 </Link>
+                {projectInfo?.id ? (
+                  <Link to={`/projects/${projectInfo.id}/access`} className="block">
+                    <Button variant="ghost" className="w-full justify-start h-11 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800">
+                      <Eye className="w-4 h-4 mr-3 text-blue-500" />
+                      <span className="text-sm">访问作品</span>
+                    </Button>
+                  </Link>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-11 rounded-xl text-zinc-400"
+                    disabled
+                  >
+                    <Eye className="w-4 h-4 mr-3 text-zinc-400" />
+                    <span className="text-sm">访问作品</span>
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -1290,6 +1341,10 @@ export default function ContestantCenterPage() {
                   <Badge variant={status === 'approved' ? 'success' : status === 'submitted' ? 'warning' : 'secondary'}>
                     {statusConfig.label}
                   </Badge>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-zinc-500">作品状态</span>
+                  <span className="text-zinc-600 dark:text-zinc-400">{projectStatusLabel}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-zinc-500">报名时间</span>

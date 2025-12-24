@@ -83,3 +83,6 @@ class RateLimits:
 
     # 管理员操作 - 每分钟最多 60 次
     ADMIN = "60/minute"
+
+    # 点赞/收藏 - 每分钟最多 30 次
+    INTERACTION = "30/minute"

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { getApiBaseUrl } from '../lib/apiBaseUrl'
 
 /**
  * 认证状态管理
@@ -37,17 +38,18 @@ export const useAuthStore = create(
       /**
        * 从服务器刷新用户信息（包含最新的 role）
        */
-      refreshUser: async () => {
-        const { token, originalRole } = get()
-        if (!token) return null
+        refreshUser: async () => {
+          const { token, originalRole } = get()
+          if (!token) return null
 
-        try {
-          const response = await fetch(
-            `${import.meta.env.VITE_API_URL || '/api/v1'}/users/me`,
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
+          try {
+            const apiBaseUrl = getApiBaseUrl()
+            const response = await fetch(
+              `${apiBaseUrl}/users/me`,
+              {
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                },
             }
           )
 

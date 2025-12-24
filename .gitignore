@@ -12,6 +12,16 @@ venv/
 .env.prod
 *.env
 
+# 本地临时与密钥
+.ssh/
+.tmp/
+.sync.tar.gz
+
+# 本地文档
+docs/进度与待办.md
+待办清单.md
+readme2.md
+
 # Build
 dist/
 build/

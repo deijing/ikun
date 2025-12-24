@@ -36,6 +36,7 @@ import {
   AlertTriangle as WarningIcon,
   CheckCircle,
   XOctagon,
+  ClipboardCheck,
 } from 'lucide-react'
 import ReactECharts from 'echarts-for-react'
 import * as echarts from 'echarts'
@@ -1126,6 +1127,293 @@ function UsersPanel() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// 作品评审分配面板
+function ProjectReviewAssignPanel() {
+  const toast = useToast()
+  const [projectIdInput, setProjectIdInput] = useState('')
+  const [project, setProject] = useState(null)
+  const [projectLoading, setProjectLoading] = useState(false)
+  const [assignments, setAssignments] = useState([])
+  const [assignmentLoading, setAssignmentLoading] = useState(false)
+  const [reviewers, setReviewers] = useState([])
+  const [reviewerSearch, setReviewerSearch] = useState('')
+  const [reviewerLoading, setReviewerLoading] = useState(false)
+  const [assigningId, setAssigningId] = useState(null)
+  const [removingId, setRemovingId] = useState(null)
+
+  const assignedIds = new Set(assignments.map((item) => item.reviewer_id))
+
+  const loadProject = async (projectId) => {
+    setProjectLoading(true)
+    try {
+      const data = await adminApi2.getProject(projectId)
+      setProject(data)
+    } catch (error) {
+      setProject(null)
+      toast.error(error.response?.data?.detail || '加载作品失败')
+    } finally {
+      setProjectLoading(false)
+    }
+  }
+
+  const loadAssignments = async (projectId) => {
+    if (!projectId) {
+      setAssignments([])
+      return
+    }
+    setAssignmentLoading(true)
+    try {
+      const data = await adminApi2.getProjectReviewers(projectId)
+      setAssignments(data.items || [])
+    } catch (error) {
+      setAssignments([])
+      toast.error(error.response?.data?.detail || '加载评审分配失败')
+    } finally {
+      setAssignmentLoading(false)
+    }
+  }
+
+  const handleLoadProject = async () => {
+    const id = parseInt(projectIdInput, 10)
+    if (!id) {
+      toast.error('请输入有效的作品 ID')
+      return
+    }
+    await Promise.all([loadProject(id), loadAssignments(id)])
+  }
+
+  const loadReviewers = async () => {
+    setReviewerLoading(true)
+    try {
+      const params = { role: 'reviewer', limit: 50 }
+      if (reviewerSearch.trim()) {
+        params.search = reviewerSearch.trim()
+      }
+      const data = await adminApi2.getUsers(params)
+      setReviewers(data.items || [])
+    } catch (error) {
+      setReviewers([])
+      toast.error('加载评审员失败')
+    } finally {
+      setReviewerLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadReviewers()
+  }, [])
+
+  const handleAssign = async (reviewerId) => {
+    if (!project?.id) {
+      toast.error('请先加载作品')
+      return
+    }
+    setAssigningId(reviewerId)
+    try {
+      await adminApi2.assignProjectReviewers(project.id, [reviewerId])
+      toast.success('分配成功')
+      await loadAssignments(project.id)
+    } catch (error) {
+      toast.error(error.response?.data?.detail || '分配失败')
+    } finally {
+      setAssigningId(null)
+    }
+  }
+
+  const handleRemove = async (reviewerId) => {
+    if (!project?.id) {
+      toast.error('请先加载作品')
+      return
+    }
+    setRemovingId(reviewerId)
+    try {
+      await adminApi2.removeProjectReviewer(project.id, reviewerId)
+      toast.success('已移除评审员')
+      await loadAssignments(project.id)
+    } catch (error) {
+      toast.error(error.response?.data?.detail || '移除失败')
+    } finally {
+      setRemovingId(null)
+    }
+  }
+
+  const ownerName = project?.owner?.display_name || project?.owner?.username || (project?.user_id ? `用户#${project.user_id}` : '-')
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">作品评审分配</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+              先加载作品，再为评审员分配权限
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              value={projectIdInput}
+              onChange={(e) => setProjectIdInput(e.target.value)}
+              placeholder="作品 ID"
+              className="w-32 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+            />
+            <button
+              onClick={handleLoadProject}
+              disabled={projectLoading}
+              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            >
+              {projectLoading ? '加载中...' : '加载作品'}
+            </button>
+          </div>
+        </div>
+
+        {project && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800">
+              <div className="text-slate-500 mb-1">作品标题</div>
+              <div className="text-slate-900 dark:text-white font-medium">{project.title || '-'}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800">
+              <div className="text-slate-500 mb-1">作者</div>
+              <div className="text-slate-900 dark:text-white font-medium">{ownerName}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800">
+              <div className="text-slate-500 mb-1">作品状态</div>
+              <div className="text-slate-900 dark:text-white font-medium">{project.status}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800">
+              <div className="text-slate-500 mb-1">当前提交</div>
+              <div className="text-slate-900 dark:text-white font-medium">{project.current_submission_id || '-'}</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold text-slate-900 dark:text-white">已分配评审员</h3>
+          <button
+            onClick={() => project?.id && loadAssignments(project.id)}
+            disabled={!project?.id || assignmentLoading}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm border border-slate-200 dark:border-slate-700 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            <RefreshCw className={`w-4 h-4 ${assignmentLoading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+
+        {!project ? (
+          <div className="text-sm text-slate-500">请先加载作品</div>
+        ) : assignmentLoading ? (
+          <div className="text-sm text-slate-500 flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 animate-spin" />
+            加载中...
+          </div>
+        ) : assignments.length === 0 ? (
+          <div className="text-sm text-slate-500">暂无分配记录</div>
+        ) : (
+          <div className="space-y-3">
+            {assignments.map((item) => (
+              <div key={item.reviewer_id} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800">
+                <div>
+                  <div className="text-slate-900 dark:text-white font-medium">
+                    {item.reviewer?.display_name || item.reviewer?.username || `评审员#${item.reviewer_id}`}
+                  </div>
+                  <div className="text-xs text-slate-500">ID: {item.reviewer_id}</div>
+                </div>
+                <button
+                  onClick={() => handleRemove(item.reviewer_id)}
+                  disabled={removingId === item.reviewer_id}
+                  className="px-3 py-1.5 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
+                >
+                  {removingId === item.reviewer_id ? '移除中...' : '移除'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
+          <h3 className="text-base font-semibold text-slate-900 dark:text-white">评审员列表</h3>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={reviewerSearch}
+              onChange={(e) => setReviewerSearch(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && loadReviewers()}
+              placeholder="搜索用户名/昵称"
+              className="w-56 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+            />
+            <button
+              onClick={loadReviewers}
+              disabled={reviewerLoading}
+              className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors"
+            >
+              {reviewerLoading ? '加载中...' : '搜索'}
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[500px] text-sm">
+            <thead className="bg-slate-50 dark:bg-slate-800">
+              <tr>
+                <th className="px-4 py-3 text-left text-slate-600">ID</th>
+                <th className="px-4 py-3 text-left text-slate-600">评审员</th>
+                <th className="px-4 py-3 text-right text-slate-600">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {reviewerLoading ? (
+                <tr>
+                  <td colSpan={3} className="px-4 py-6 text-center text-slate-500">
+                    <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
+                    加载中...
+                  </td>
+                </tr>
+              ) : reviewers.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="px-4 py-6 text-center text-slate-500">暂无评审员</td>
+                </tr>
+              ) : (
+                reviewers.map((user) => {
+                  const assigned = assignedIds.has(user.id)
+                  return (
+                    <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                      <td className="px-4 py-3 text-slate-600">{user.id}</td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-slate-900 dark:text-white">
+                          {user.display_name || user.username}
+                        </div>
+                        <div className="text-xs text-slate-500">@{user.username}</div>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => handleAssign(user.id)}
+                          disabled={!project?.id || assigned || assigningId === user.id}
+                          className={`px-3 py-1.5 rounded-lg text-sm ${
+                            assigned
+                              ? 'bg-slate-100 text-slate-400'
+                              : 'bg-blue-500 text-white hover:bg-blue-600'
+                          }`}
+                        >
+                          {assigned ? '已分配' : assigningId === user.id ? '分配中...' : '分配'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }
@@ -5371,7 +5659,7 @@ function AnnouncementPanel() {
 }
 
 // 有效的 Tab 列表
-const VALID_TABS = ['dashboard', 'users', 'signin', 'lottery', 'activity', 'apikeys', 'apimonitor', 'prediction', 'logs', 'announcements']
+const VALID_TABS = ['dashboard', 'users', 'review-assign', 'signin', 'lottery', 'activity', 'apikeys', 'apimonitor', 'prediction', 'logs', 'announcements']
 
 // 主页面
 export default function AdminDashboardPage() {
@@ -5443,6 +5731,7 @@ export default function AdminDashboardPage() {
           <div className="flex gap-1.5 p-1.5 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md rounded-xl border border-slate-200/50 dark:border-slate-700/50 overflow-x-auto scrollbar-hide">
             <Tab active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={BarChart3}>仪表盘</Tab>
             <Tab active={activeTab === 'users'} onClick={() => handleTabChange('users')} icon={Users}>用户</Tab>
+            <Tab active={activeTab === 'review-assign'} onClick={() => handleTabChange('review-assign')} icon={ClipboardCheck}>评审分配</Tab>
             <Tab active={activeTab === 'signin'} onClick={() => handleTabChange('signin')} icon={Calendar}>签到</Tab>
             <Tab active={activeTab === 'lottery'} onClick={() => handleTabChange('lottery')} icon={Gift}>抽奖</Tab>
             <Tab active={activeTab === 'activity'} onClick={() => handleTabChange('activity')} icon={Zap}>活动</Tab>
@@ -5458,6 +5747,7 @@ export default function AdminDashboardPage() {
         <div className="transition-all duration-500 ease-in-out">
           {activeTab === 'dashboard' && <DashboardPanel />}
           {activeTab === 'users' && <UsersPanel />}
+          {activeTab === 'review-assign' && <ProjectReviewAssignPanel />}
           {activeTab === 'signin' && <SigninConfigPanel />}
           {activeTab === 'lottery' && <ActivityConfigPanel />}
           {activeTab === 'activity' && <ActivityConfigPanel />}

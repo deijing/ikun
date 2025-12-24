@@ -2,7 +2,7 @@
 作品提交相关 Pydantic Schemas
 
 定义作品提交的请求体、响应体和数据验证规则。
-支持5种必填材料：项目源码、演示视频、项目文档、API调用证明、参赛报名表。
+支持5种材料：项目源码、演示视频（可选）、项目文档、API调用证明、参赛报名表。
 """
 from datetime import datetime
 from typing import Any, Optional

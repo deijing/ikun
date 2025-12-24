@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { Crown, Trophy, Heart, Coffee, Zap, Pizza, Star, GitCommit, Flame, Sparkles, ThumbsUp, Code2, Clock, Target } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { Crown, Trophy, Heart, Coffee, Zap, Pizza, Star, GitCommit, Flame, Sparkles, ThumbsUp, Code2, Clock, Target, Bookmark } from 'lucide-react'
 import api from '../services/api'
 import { cn } from '@/lib/utils'
 
@@ -8,10 +8,13 @@ const CONTEST_ID = 1
 
 const TABS = [
   { key: 'cheer', label: '人气排行榜', icon: Heart },
+  { key: 'like', label: '点赞榜', icon: ThumbsUp },
+  { key: 'favorite', label: '收藏榜', icon: Bookmark },
   { key: 'github', label: '代码提交排行榜', icon: GitCommit },
   { key: 'quota', label: '额度消耗排行榜', icon: Flame },
   { key: 'lucky', label: '欧皇榜', icon: Sparkles },
   { key: 'heat', label: '热力榜', icon: ThumbsUp },
+  { key: 'review', label: '评审榜', icon: Star },
   { key: 'puzzle', label: '码神挑战榜', icon: Code2 },
 ]
 
@@ -109,6 +112,12 @@ function TopCard({ entry, rank, mode }) {
   if (mode === 'cheer') {
     metricValue = entry?.stats?.total ?? 0
     metricLabel = '总打气'
+  } else if (mode === 'like') {
+    metricValue = entry?.count ?? 0
+    metricLabel = '点赞数'
+  } else if (mode === 'favorite') {
+    metricValue = entry?.count ?? 0
+    metricLabel = '收藏数'
   } else if (mode === 'quota') {
     metricValue = entry?.quota?.used != null ? `$${entry.quota.used.toFixed(2)}` : '-'
     metricLabel = '已消耗'
@@ -121,6 +130,9 @@ function TopCard({ entry, rank, mode }) {
     metricValue = entry?.heat_value ?? 0
     metricLabel = '热力值'
     showTitle = false // 热力榜显示用户，不显示项目名
+  } else if (mode === 'review') {
+    metricValue = entry?.stats?.final_score != null ? Number(entry.stats.final_score).toFixed(2) : '-'
+    metricLabel = '评审得分'
   } else if (mode === 'puzzle') {
     metricValue = `${entry?.total_solved ?? 0}/42`
     metricLabel = '通关进度'
@@ -162,6 +174,8 @@ function TopCard({ entry, rank, mode }) {
                 <Sparkles className={cn('w-4 h-4', medal?.crown)} />
               ) : mode === 'heat' ? (
                 <Flame className={cn('w-4 h-4', medal?.crown)} />
+              ) : mode === 'review' ? (
+                <Star className={cn('w-4 h-4', medal?.crown)} />
               ) : mode === 'puzzle' ? (
                 <Code2 className={cn('w-4 h-4', medal?.crown)} />
               ) : (
@@ -269,6 +283,12 @@ function Row({ entry, mode }) {
   if (mode === 'cheer') {
     value = entry?.stats?.total ?? 0
     metricLabel = '总打气'
+  } else if (mode === 'like') {
+    value = entry?.count ?? 0
+    metricLabel = '点赞数'
+  } else if (mode === 'favorite') {
+    value = entry?.count ?? 0
+    metricLabel = '收藏数'
   } else if (mode === 'quota') {
     value = entry?.quota?.used != null ? `$${entry.quota.used.toFixed(2)}` : '-'
     metricLabel = '已消耗'
@@ -281,6 +301,10 @@ function Row({ entry, mode }) {
     value = entry?.heat_value ?? 0
     metricLabel = '热力值'
     showTitle = false
+  } else if (mode === 'review') {
+    value = entry?.stats?.final_score != null ? Number(entry.stats.final_score).toFixed(2) : '-'
+    metricLabel = '评审得分'
+    subValue = entry?.stats?.review_count != null ? `评分人数 ${entry.stats.review_count}` : null
   } else if (mode === 'puzzle') {
     value = `${entry?.total_solved ?? 0}/42`
     metricLabel = '通关进度'
@@ -290,7 +314,23 @@ function Row({ entry, mode }) {
     metricLabel = '提交数'
   }
 
-  const MetricIcon = mode === 'cheer' ? Heart : mode === 'quota' ? Flame : mode === 'lucky' ? Sparkles : mode === 'heat' ? Flame : mode === 'puzzle' ? Target : GitCommit
+  const MetricIcon = mode === 'cheer'
+    ? Heart
+    : mode === 'like'
+      ? ThumbsUp
+      : mode === 'favorite'
+        ? Bookmark
+        : mode === 'quota'
+          ? Flame
+          : mode === 'lucky'
+            ? Sparkles
+            : mode === 'heat'
+              ? Flame
+              : mode === 'review'
+                ? Star
+                : mode === 'puzzle'
+                  ? Target
+                  : GitCommit
 
   // 欧皇榜、热力榜、码神挑战榜使用 entry 上的用户信息
   const isUserMode = mode === 'lucky' || mode === 'heat' || mode === 'puzzle'
@@ -384,6 +424,19 @@ function Row({ entry, mode }) {
             </div>
           </div>
         )}
+        {mode === 'review' && subValue && (
+          <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+            {subValue}
+          </div>
+        )}
+        {mode === 'review' && entry?.project_id && (
+          <Link
+            to={`/ranking/review/${entry.project_id}`}
+            className="inline-flex items-center justify-end text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 mt-2"
+          >
+            查看详情
+          </Link>
+        )}
       </div>
     </div>
   )
@@ -403,10 +456,13 @@ export default function RankingPage() {
 
   const title = useMemo(() => {
     if (activeTab === 'cheer') return '人气排行榜'
+    if (activeTab === 'like') return '点赞榜'
+    if (activeTab === 'favorite') return '收藏榜'
     if (activeTab === 'github') return '代码提交排行榜'
     if (activeTab === 'quota') return '额度消耗排行榜'
     if (activeTab === 'lucky') return '欧皇榜'
     if (activeTab === 'heat') return '热力榜'
+    if (activeTab === 'review') return '评审得分榜'
     if (activeTab === 'puzzle') return '码神挑战榜'
     return '排行榜'
   }, [activeTab])
@@ -421,6 +477,10 @@ export default function RankingPage() {
       let res
       if (tab === 'cheer') {
         res = await api.get(`/contests/${CONTEST_ID}/cheer-leaderboard`, { params: { limit: 50 } })
+      } else if (tab === 'like') {
+        res = await api.get(`/contests/${CONTEST_ID}/interaction-leaderboard`, { params: { type: 'like', limit: 50 } })
+      } else if (tab === 'favorite') {
+        res = await api.get(`/contests/${CONTEST_ID}/interaction-leaderboard`, { params: { type: 'favorite', limit: 50 } })
       } else if (tab === 'github') {
         res = await api.get(`/contests/${CONTEST_ID}/github-leaderboard`, {
           params: { leaderboard_type: 'commits', limit: 50 },
@@ -431,6 +491,8 @@ export default function RankingPage() {
         res = await api.get('/lottery/leaderboard', { params: { limit: 50 } })
       } else if (tab === 'heat') {
         res = await api.get('/votes/leaderboard', { params: { contest_id: CONTEST_ID, limit: 50 } })
+      } else if (tab === 'review') {
+        res = await api.get(`/contests/${CONTEST_ID}/ranking`, { params: { limit: 50 } })
       } else if (tab === 'puzzle') {
         res = await api.get('/puzzle/leaderboard', { params: { limit: 50 } })
       }
@@ -534,12 +596,18 @@ export default function RankingPage() {
                 <div className="text-xs text-zinc-500 dark:text-zinc-400">
                   {activeTab === 'cheer'
                     ? '基于总打气数'
+                    : activeTab === 'like'
+                      ? '基于作品点赞数'
+                      : activeTab === 'favorite'
+                        ? '基于作品收藏数'
                     : activeTab === 'quota'
                       ? `基于已消耗额度${data.failed_queries ? `（${data.failed_queries} 条查询失败）` : ''}`
                       : activeTab === 'lucky'
                         ? '基于稀有奖品中奖次数'
                         : activeTab === 'heat'
                           ? '基于用户打赏消耗的道具积分'
+                          : activeTab === 'review'
+                            ? '基于评审得分（3 人以上去掉最高最低取平均）'
                           : activeTab === 'puzzle'
                             ? '基于通关关卡数，同关卡数按用时排序'
                             : '基于累计提交数'}
@@ -549,7 +617,11 @@ export default function RankingPage() {
               {/* Full List */}
               <div className="grid grid-cols-1 gap-3">
                 {items.map((entry) => (
-                  <Row key={`${activeTab}-${entry?.registration_id ?? entry?.user_id ?? entry?.submission_id ?? entry?.rank}`} entry={entry} mode={activeTab} />
+                  <Row
+                    key={`${activeTab}-${entry?.project_id ?? entry?.registration_id ?? entry?.user_id ?? entry?.submission_id ?? entry?.rank}`}
+                    entry={entry}
+                    mode={activeTab}
+                  />
                 ))}
               </div>
             </>

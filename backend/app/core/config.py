@@ -78,6 +78,32 @@ class Settings(BaseSettings):
     ONLINE_STATUS_CACHE_TTL_STALE_SECONDS: int = 60  # stale-while-revalidate 窗口
     ONLINE_STATUS_CACHE_TTL_ERROR_SECONDS: int = 10  # 失败缓存（更短）
 
+    # 作品部署提交流程配置
+    PROJECT_SUBMISSION_COOLDOWN_SECONDS: int = 600  # 每次提交最小间隔
+    PROJECT_SUBMISSION_DAILY_LIMIT: int = 10  # 每日提交上限
+    WORKER_API_TOKEN: Optional[str] = None  # Worker 状态回写 Token
+    WORKER_API_BASE_URL: str = "http://127.0.0.1:8000"  # Worker 回写 API 基址
+    WORKER_QUEUE_KEY: str = "project_submissions:queue"  # 提交队列 Key
+    WORKER_QUEUE_BLOCK_SECONDS: int = 5  # 阻塞等待队列秒数
+    WORKER_STEP_DELAY_SECONDS: int = 2  # 模拟部署每步等待秒数
+    WORKER_HEALTHCHECK_ENABLED: bool = False  # 是否启用健康检查
+    WORKER_HEALTHCHECK_PATH: str = "/healthz"  # 健康检查路径
+    WORKER_HEALTHCHECK_TIMEOUT_SECONDS: int = 5  # 健康检查超时
+    WORKER_HEALTHCHECK_RETRY: int = 12  # 健康检查重试次数
+    WORKER_HEALTHCHECK_INTERVAL_SECONDS: int = 5  # 健康检查重试间隔
+    WORKER_DOCKER_HOST: str = "unix:///var/run/docker.sock"  # Docker 连接地址
+    WORKER_DEPLOY_NETWORK: Optional[str] = None  # 部署容器使用的网络（为空则自动探测）
+    WORKER_PROJECT_PORT: int = 8080  # 作品容器对内端口
+    WORKER_CONTAINER_MEMORY_LIMIT: str = "1g"  # 作品容器内存上限
+    WORKER_CONTAINER_CPU_LIMIT: float = 1.0  # 作品容器 CPU 上限（核数）
+    WORKER_CONTAINER_PIDS_LIMIT: int = 256  # 作品容器进程数上限
+    WORKER_CONTAINER_LOG_MAX_SIZE: str = "10m"  # 作品容器日志单文件上限
+    WORKER_CONTAINER_LOG_MAX_FILE: int = 3  # 作品容器日志文件数量
+
+    # 作品访问域名规则
+    PROJECT_DOMAIN_SUFFIX: str = "local"  # 作品域名后缀
+    PROJECT_DOMAIN_TEMPLATE: str = "project-{submission_id}.{suffix}"  # 域名模板
+
     class Config:
         env_file = ".env"
         case_sensitive = True

@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import { trackLogin } from '../utils/analytics'
+import { getApiBaseUrl } from '../lib/apiBaseUrl'
 import logo from '@/assets/logo.png'
 
 /**
@@ -31,13 +32,7 @@ export default function LoginPage() {
 
   const apiBaseUrl = useMemo(() => {
     // OAuth 登录需要完整 URL，不能用相对路径
-    // 生产环境使用当前域名 + /api/v1
-    const envUrl = import.meta.env.VITE_API_URL
-    if (envUrl && envUrl.startsWith('http')) {
-      return envUrl
-    }
-    // 相对路径或未设置时，使用当前域名
-    return `${window.location.origin}/api/v1`
+    return getApiBaseUrl()
   }, [])
 
   // 从 URL 参数获取登录后跳转目标

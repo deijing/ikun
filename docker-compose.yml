@@ -43,6 +43,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
       - FRONTEND_URL=${FRONTEND_URL:-http://127.0.0.1:5173}
+      - WORKER_API_TOKEN=${WORKER_API_TOKEN:-dev-worker-token}
+      - PROJECT_DOMAIN_SUFFIX=${PROJECT_DOMAIN_SUFFIX:-local}
+      - PROJECT_DOMAIN_TEMPLATE=${PROJECT_DOMAIN_TEMPLATE:-project-{submission_id}.{suffix}}
       - LINUX_DO_CLIENT_ID=${LINUX_DO_CLIENT_ID:-}
       - LINUX_DO_CLIENT_SECRET=${LINUX_DO_CLIENT_SECRET:-}
       - LINUX_DO_REDIRECT_URI=${LINUX_DO_REDIRECT_URI:-}
@@ -57,6 +60,42 @@ services:
     volumes:
       - ./backend:/app
     restart: unless-stopped  # 自动重启
+
+  # Worker 服务（部署流程）
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: chicken_king_worker
+    command: ["python", "-m", "app.worker"]
+    environment:
+      - DATABASE_URL=mysql+aiomysql://root:${MYSQL_ROOT_PASSWORD:-password}@db:3306/${MYSQL_DATABASE:-chicken_king}
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - WORKER_API_TOKEN=${WORKER_API_TOKEN:-dev-worker-token}
+      - WORKER_API_BASE_URL=http://backend:8000
+      - WORKER_HEALTHCHECK_ENABLED=${WORKER_HEALTHCHECK_ENABLED:-false}
+      - WORKER_DOCKER_HOST=${WORKER_DOCKER_HOST:-unix:///var/run/docker.sock}
+      - WORKER_DEPLOY_NETWORK=${WORKER_DEPLOY_NETWORK:-}
+      - WORKER_PROJECT_PORT=${WORKER_PROJECT_PORT:-8080}
+      - WORKER_CONTAINER_MEMORY_LIMIT=${WORKER_CONTAINER_MEMORY_LIMIT:-1g}
+      - WORKER_CONTAINER_CPU_LIMIT=${WORKER_CONTAINER_CPU_LIMIT:-1.0}
+      - WORKER_CONTAINER_PIDS_LIMIT=${WORKER_CONTAINER_PIDS_LIMIT:-256}
+      - WORKER_CONTAINER_LOG_MAX_SIZE=${WORKER_CONTAINER_LOG_MAX_SIZE:-10m}
+      - WORKER_CONTAINER_LOG_MAX_FILE=${WORKER_CONTAINER_LOG_MAX_FILE:-3}
+      - PROJECT_DOMAIN_SUFFIX=${PROJECT_DOMAIN_SUFFIX:-local}
+      - PROJECT_DOMAIN_TEMPLATE=${PROJECT_DOMAIN_TEMPLATE:-project-{submission_id}.{suffix}}
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped  # 自动重启
+    healthcheck:
+      disable: true
 
   # React 前端 (生产模式 - Nginx 静态文件服务)
   frontend:
@@ -102,6 +141,18 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # Traefik 项目网关
+  traefik:
+    image: traefik:v2.10
+    container_name: chicken_king_traefik
+    command:
+      - --entrypoints.web.address=:8081
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
   # Nginx 反向代理
   nginx:
     image: nginx:alpine
@@ -116,6 +167,7 @@ services:
     depends_on:
       - backend
       - frontend
+      - traefik
     restart: unless-stopped
     networks:
       - default
