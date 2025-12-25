@@ -2114,7 +2114,7 @@ CREATE TABLE `project_submissions` (
   `image_registry` varchar(100) DEFAULT NULL COMMENT '镜像仓库域名',
   `image_repo` varchar(300) DEFAULT NULL COMMENT '镜像仓库路径',
   `image_digest` varchar(128) DEFAULT NULL COMMENT '镜像 digest',
-  `status` enum('created','queued','pulling','deploying','healthchecking','online','failed') NOT NULL DEFAULT 'created' COMMENT '提交状态',
+  `status` enum('created','queued','pulling','deploying','healthchecking','online','failed','stopped') NOT NULL DEFAULT 'created' COMMENT '提交状态',
   `status_message` varchar(500) DEFAULT NULL COMMENT '状态说明',
   `error_code` varchar(100) DEFAULT NULL COMMENT '错误码',
   `log` longtext COMMENT '部署日志',

@@ -25,6 +25,7 @@ class ProjectSubmissionStatus(str, enum.Enum):
     HEALTHCHECKING = "healthchecking"  # 健康检查中
     ONLINE = "online"             # 已上线
     FAILED = "failed"             # 失败
+    STOPPED = "stopped"           # 已停止
 
 
 class ProjectSubmission(BaseModel):
@@ -42,7 +43,7 @@ class ProjectSubmission(BaseModel):
 
     status = Column(
         SQLEnum(
-            'created', 'queued', 'pulling', 'deploying', 'healthchecking', 'online', 'failed',
+            'created', 'queued', 'pulling', 'deploying', 'healthchecking', 'online', 'failed', 'stopped',
             name='projectsubmissionstatus'
         ),
         default='created',

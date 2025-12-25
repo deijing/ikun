@@ -107,6 +107,48 @@ const PRIZE_TYPE_MAP = {
   NOTHING: '谢谢参与',
 }
 
+const CONTEST_PHASE_LABELS = {
+  upcoming: '即将开始',
+  signup: '报名中',
+  submission: '提交中',
+  voting: '投票中',
+  ended: '已结束',
+}
+
+const CONTEST_PHASE_OPTIONS = [
+  { value: 'upcoming', label: '即将开始' },
+  { value: 'signup', label: '报名中' },
+  { value: 'submission', label: '提交中' },
+  { value: 'voting', label: '投票中' },
+  { value: 'ended', label: '已结束' },
+]
+
+const CONTEST_FORM_DEFAULT = {
+  title: '',
+  description: '',
+  phase: 'upcoming',
+  signup_start: '',
+  signup_end: '',
+  submit_start: '',
+  submit_end: '',
+  vote_start: '',
+  vote_end: '',
+}
+
+const toContestDatetimeInput = (value) => {
+  if (!value) return ''
+  const text = typeof value === 'string' ? value : new Date(value).toISOString()
+  if (!text.includes('T')) return ''
+  return text.slice(0, 16)
+}
+
+const formatContestDateTime = (value) => {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString('zh-CN')
+}
+
 // 仪表盘面板
 function DashboardPanel() {
   const theme = useThemeStore((s) => s.theme)
@@ -1129,9 +1171,350 @@ function UsersPanel() {
       )}
     </div>
   )
-}
+  }
 
-// 作品评审分配面板
+  // 赛事管理面板
+  function ContestManagementPanel() {
+    const toast = useToast()
+    const [contests, setContests] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [showEditor, setShowEditor] = useState(false)
+    const [saving, setSaving] = useState(false)
+    const [editingContest, setEditingContest] = useState(null)
+    const [formData, setFormData] = useState({ ...CONTEST_FORM_DEFAULT })
+
+    const loadContests = async () => {
+      setLoading(true)
+      try {
+        const data = await adminApi2.get('/contests')
+        setContests(data.items || [])
+      } catch (error) {
+        console.error('加载赛事失败:', error)
+        toast.error('加载赛事失败')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    useEffect(() => {
+      loadContests()
+    }, [])
+
+    const buildFormData = (contest) => ({
+      title: contest?.title || '',
+      description: contest?.description || '',
+      phase: contest?.phase || 'upcoming',
+      signup_start: toContestDatetimeInput(contest?.signup_start),
+      signup_end: toContestDatetimeInput(contest?.signup_end),
+      submit_start: toContestDatetimeInput(contest?.submit_start),
+      submit_end: toContestDatetimeInput(contest?.submit_end),
+      vote_start: toContestDatetimeInput(contest?.vote_start),
+      vote_end: toContestDatetimeInput(contest?.vote_end),
+    })
+
+    const openEditor = (contest = null) => {
+      setEditingContest(contest)
+      setFormData(contest ? buildFormData(contest) : { ...CONTEST_FORM_DEFAULT })
+      setShowEditor(true)
+    }
+
+    const updateField = (key, value) => {
+      setFormData((prev) => ({ ...prev, [key]: value }))
+    }
+
+    const buildPayload = () => ({
+      title: formData.title.trim(),
+      description: formData.description.trim() || null,
+      phase: formData.phase || null,
+      signup_start: formData.signup_start || null,
+      signup_end: formData.signup_end || null,
+      submit_start: formData.submit_start || null,
+      submit_end: formData.submit_end || null,
+      vote_start: formData.vote_start || null,
+      vote_end: formData.vote_end || null,
+    })
+
+    const handleSave = async () => {
+      const title = formData.title.trim()
+      if (!title) {
+        toast.error('请输入赛事标题')
+        return
+      }
+
+      setSaving(true)
+      try {
+        const payload = buildPayload()
+        if (editingContest) {
+          await adminApi2.patch(`/contests/${editingContest.id}`, payload)
+          toast.success('赛事已更新')
+        } else {
+          await adminApi2.post('/contests', payload)
+          toast.success('赛事已创建')
+        }
+        setShowEditor(false)
+        loadContests()
+      } catch (error) {
+        console.error('保存赛事失败:', error)
+        toast.error('保存赛事失败')
+      } finally {
+        setSaving(false)
+      }
+    }
+
+    const renderTimeRange = (start, end) => {
+      if (!start && !end) {
+        return '未配置'
+      }
+      return `${formatContestDateTime(start)} ~ ${formatContestDateTime(end)}`
+    }
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-500/20">
+              <Award className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">赛事管理</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">创建与维护比赛阶段配置</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={loadContests}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              刷新
+            </button>
+            <button
+              onClick={() => openEditor()}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl font-medium shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 transition-all hover:-translate-y-0.5"
+            >
+              <Plus className="w-4 h-4" />
+              新建赛事
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden">
+          {loading ? (
+            <div className="p-8 text-center text-slate-500">加载中...</div>
+          ) : contests.length === 0 ? (
+            <div className="p-8 text-center text-slate-500">
+              <Award className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p>暂无赛事</p>
+              <p className="text-sm mt-1">点击上方按钮创建第一场赛事</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {contests.map((contest) => (
+                <div key={contest.id} className="p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                          {contest.title}
+                        </h3>
+                        <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">
+                          {CONTEST_PHASE_LABELS[contest.phase] || contest.phase || '未知'}
+                        </span>
+                      </div>
+                      {contest.description && (
+                        <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+                          {contest.description}
+                        </p>
+                      )}
+                      <div className="text-xs text-slate-500 dark:text-slate-500 mt-2">
+                        赛事 ID：{contest.id}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => openEditor(contest)}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                      编辑
+                    </button>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-600 dark:text-slate-400">
+                    <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3">
+                      <div className="font-medium text-slate-700 dark:text-slate-300">报名期</div>
+                      <div className="mt-1">{renderTimeRange(contest.signup_start, contest.signup_end)}</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3">
+                      <div className="font-medium text-slate-700 dark:text-slate-300">提交期</div>
+                      <div className="mt-1">{renderTimeRange(contest.submit_start, contest.submit_end)}</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3">
+                      <div className="font-medium text-slate-700 dark:text-slate-300">投票期</div>
+                      <div className="mt-1">{renderTimeRange(contest.vote_start, contest.vote_end)}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {showEditor && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="w-full max-w-3xl mx-4 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                  {editingContest ? '编辑赛事' : '新建赛事'}
+                </h3>
+                <button
+                  onClick={() => setShowEditor(false)}
+                  className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      赛事标题 <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.title}
+                      onChange={(e) => updateField('title', e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                      placeholder="请输入赛事名称"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      当前阶段
+                    </label>
+                    <select
+                      value={formData.phase}
+                      onChange={(e) => updateField('phase', e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    >
+                      {CONTEST_PHASE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    赛事描述
+                  </label>
+                  <textarea
+                    value={formData.description}
+                    onChange={(e) => updateField('description', e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none"
+                    placeholder="简要说明比赛内容与规则"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      报名开始时间
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={formData.signup_start}
+                      onChange={(e) => updateField('signup_start', e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      报名结束时间
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={formData.signup_end}
+                      onChange={(e) => updateField('signup_end', e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      提交开始时间
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={formData.submit_start}
+                      onChange={(e) => updateField('submit_start', e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      提交结束时间
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={formData.submit_end}
+                      onChange={(e) => updateField('submit_end', e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      投票开始时间
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={formData.vote_start}
+                      onChange={(e) => updateField('vote_start', e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      投票结束时间
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={formData.vote_end}
+                      onChange={(e) => updateField('vote_end', e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  配置时间后系统会自动切换比赛阶段，可按需手动调整阶段。
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                <button
+                  onClick={() => setShowEditor(false)}
+                  className="px-5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-medium shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 transition-all disabled:opacity-60"
+                >
+                  {saving ? '保存中...' : '保存'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // 作品评审分配面板
 function ProjectReviewAssignPanel() {
   const toast = useToast()
   const [projectIdInput, setProjectIdInput] = useState('')
@@ -1442,6 +1825,7 @@ function ProjectDeployPanel() {
     healthchecking: '健康检查',
     online: '已上线',
     failed: '失败',
+    stopped: '已停止',
   }
 
   const STATUS_STYLES = {
@@ -1452,6 +1836,7 @@ function ProjectDeployPanel() {
     healthchecking: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
     online: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300',
     failed: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300',
+    stopped: 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
   }
 
   const formatDateTime = (value) => {
@@ -6035,7 +6420,7 @@ function AnnouncementPanel() {
 }
 
 // 有效的 Tab 列表
-const VALID_TABS = ['dashboard', 'users', 'review-assign', 'project-deploy', 'signin', 'lottery', 'activity', 'apikeys', 'apimonitor', 'prediction', 'logs', 'announcements']
+const VALID_TABS = ['dashboard', 'users', 'contests', 'review-assign', 'project-deploy', 'signin', 'lottery', 'activity', 'apikeys', 'apimonitor', 'prediction', 'logs', 'announcements']
 
 // 主页面
 export default function AdminDashboardPage() {
@@ -6107,6 +6492,7 @@ export default function AdminDashboardPage() {
           <div className="flex gap-1.5 p-1.5 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md rounded-xl border border-slate-200/50 dark:border-slate-700/50 overflow-x-auto scrollbar-hide">
             <Tab active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={BarChart3}>仪表盘</Tab>
             <Tab active={activeTab === 'users'} onClick={() => handleTabChange('users')} icon={Users}>用户</Tab>
+            <Tab active={activeTab === 'contests'} onClick={() => handleTabChange('contests')} icon={Award}>赛事</Tab>
             <Tab active={activeTab === 'review-assign'} onClick={() => handleTabChange('review-assign')} icon={ClipboardCheck}>评审分配</Tab>
             <Tab active={activeTab === 'project-deploy'} onClick={() => handleTabChange('project-deploy')} icon={Play}>部署管理</Tab>
             <Tab active={activeTab === 'signin'} onClick={() => handleTabChange('signin')} icon={Calendar}>签到</Tab>
@@ -6124,6 +6510,7 @@ export default function AdminDashboardPage() {
         <div className="transition-all duration-500 ease-in-out">
           {activeTab === 'dashboard' && <DashboardPanel />}
           {activeTab === 'users' && <UsersPanel />}
+          {activeTab === 'contests' && <ContestManagementPanel />}
           {activeTab === 'review-assign' && <ProjectReviewAssignPanel />}
           {activeTab === 'project-deploy' && <ProjectDeployPanel />}
           {activeTab === 'signin' && <SigninConfigPanel />}

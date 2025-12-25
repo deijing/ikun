@@ -7,6 +7,7 @@ import logging
 from typing import Optional, Tuple
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status, Request
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +53,8 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 ALLOWED_REGISTRIES = {"ghcr.io", "docker.io"}
+ALLOWED_REPO_HOSTS = ("https://github.com/", "https://gitee.com/")
+REPO_CHECK_TIMEOUT_SECONDS = 6.0
 
 
 async def enqueue_worker_action(action: str, submission_id: int) -> None:
@@ -151,6 +154,37 @@ def parse_image_ref(image_ref: str) -> Tuple[Optional[str], Optional[str], Optio
     registry = parts[0]
     repo = "/".join(parts[1:]) if len(parts) > 1 else None
     return registry, repo, digest
+
+
+async def ensure_public_repo_url(repo_url: str) -> None:
+    """校验仓库链接可访问性（GitHub/Gitee）"""
+    url = repo_url.strip()
+    if not url:
+        return
+    if not url.startswith(ALLOWED_REPO_HOSTS):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仓库链接仅支持 GitHub 或 Gitee")
+
+    headers = {"User-Agent": "ikun-repo-check/1.0"}
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=REPO_CHECK_TIMEOUT_SECONDS,
+        ) as client:
+            response = await client.head(url, headers=headers)
+            if response.status_code >= 400:
+                response = await client.get(url, headers=headers)
+    except httpx.RequestError as exc:
+        logger.warning("仓库链接访问失败: url=%s, error=%s", url, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="仓库链接无法访问，请确认仓库为公开",
+        ) from exc
+
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="仓库链接无法访问，请确认仓库为公开",
+        )
 
 
 def append_status_history(
@@ -348,6 +382,9 @@ async def create_project(
     """创建作品"""
     contest = await get_contest_or_404(db, payload.contest_id)
     check_project_phase(contest)
+
+    if payload.repo_url:
+        await ensure_public_repo_url(payload.repo_url)
 
     existing_result = await db.execute(
         select(Project).where(
@@ -633,6 +670,8 @@ async def update_project(
     ensure_owner(project, current_user)
 
     update_data = payload.model_dump(exclude_unset=True)
+    if "repo_url" in update_data and update_data["repo_url"]:
+        await ensure_public_repo_url(update_data["repo_url"])
     for field, value in update_data.items():
         setattr(project, field, value)
 
@@ -669,6 +708,8 @@ async def create_project_submission(
     registry, repo, digest = parse_image_ref(payload.image_ref)
     if not registry or registry not in ALLOWED_REGISTRIES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="镜像仓库仅支持 ghcr.io 或 docker.io")
+    if repo and repo.lower().endswith(":latest"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="镜像标签禁止使用 :latest")
     if not digest or not digest.startswith("sha256:") or len(digest) != 71:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="镜像 digest 格式不正确")
 
@@ -676,6 +717,7 @@ async def create_project_submission(
     await ensure_submission_rate_limit(db, project_id, current_user.id, now)
 
     if payload.repo_url:
+        await ensure_public_repo_url(payload.repo_url)
         project.repo_url = payload.repo_url
 
     submission = ProjectSubmission(
@@ -861,6 +903,10 @@ async def update_project_submission_status(
         submission.failed_at = now
         if submission.project and submission.project.current_submission_id == submission.id:
             submission.project.status = ProjectStatus.OFFLINE.value
+    elif payload.status == ProjectSubmissionStatus.STOPPED:
+        submission.failed_at = None
+        if submission.project and submission.project.current_submission_id == submission.id:
+            submission.project.status = ProjectStatus.OFFLINE.value
 
     await db.commit()
     await db.refresh(submission)
@@ -1009,13 +1055,13 @@ async def admin_offline_project(
         submission = result.scalar_one_or_none()
         if submission:
             await enqueue_worker_action("stop", submission.id)
-            submission.status = ProjectSubmissionStatus.FAILED.value
+            submission.status = ProjectSubmissionStatus.STOPPED.value
             submission.status_message = payload.message or "管理员下架"
             submission.error_code = "admin_offline"
-            submission.failed_at = now
+            submission.failed_at = None
             append_status_history(
                 submission=submission,
-                status_value=ProjectSubmissionStatus.FAILED.value,
+                status_value=ProjectSubmissionStatus.STOPPED.value,
                 now=now,
                 message=submission.status_message,
                 error_code=submission.error_code,
@@ -1099,13 +1145,13 @@ async def admin_stop_submission(
     await enqueue_worker_action("stop", submission.id)
 
     now = datetime.utcnow()
-    submission.status = ProjectSubmissionStatus.FAILED.value
+    submission.status = ProjectSubmissionStatus.STOPPED.value
     submission.status_message = payload.message or "管理员强制停止运行"
     submission.error_code = "admin_stop"
-    submission.failed_at = now
+    submission.failed_at = None
     append_status_history(
         submission=submission,
-        status_value=ProjectSubmissionStatus.FAILED.value,
+        status_value=ProjectSubmissionStatus.STOPPED.value,
         now=now,
         message=submission.status_message,
         error_code=submission.error_code,

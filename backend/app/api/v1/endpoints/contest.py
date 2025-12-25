@@ -35,6 +35,12 @@ class ContestResponse(BaseModel):
     title: str
     description: Optional[str] = None
     phase: ContestPhase
+    signup_start: Optional[datetime] = None
+    signup_end: Optional[datetime] = None
+    submit_start: Optional[datetime] = None
+    submit_end: Optional[datetime] = None
+    vote_start: Optional[datetime] = None
+    vote_end: Optional[datetime] = None
 
 
 class ContestListResponse(BaseModel):

@@ -203,7 +203,7 @@ CREATE TABLE `project_submissions` (
   `image_repo` VARCHAR(300) NULL COMMENT '镜像仓库路径',
   `image_digest` VARCHAR(128) NULL COMMENT '镜像 digest',
 
-  `status` ENUM('created', 'queued', 'pulling', 'deploying', 'healthchecking', 'online', 'failed')
+  `status` ENUM('created', 'queued', 'pulling', 'deploying', 'healthchecking', 'online', 'failed', 'stopped')
     NOT NULL DEFAULT 'created' COMMENT '提交状态',
   `status_message` VARCHAR(500) NULL COMMENT '状态说明',
   `error_code` VARCHAR(100) NULL COMMENT '错误码',

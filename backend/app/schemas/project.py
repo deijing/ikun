@@ -125,6 +125,9 @@ class ProjectSubmissionCreate(BaseModel):
         v = v.strip()
         if "@sha256:" not in v:
             raise ValueError("镜像引用必须包含 @sha256 digest")
+        ref = v.split("@", 1)[0].strip()
+        if ref.lower().endswith(":latest"):
+            raise ValueError("镜像标签禁止使用 :latest")
         return v
 
     @field_validator("repo_url")
