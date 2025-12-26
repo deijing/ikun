@@ -38,17 +38,11 @@ services:
     container_name: chicken_king_backend
     ports:
       - "127.0.0.1:8000:8000"  # 仅绑定本地，通过 nginx 代理访问
+    env_file:
+      - ./.env
     environment:
-      - DATABASE_URL=mysql+aiomysql://root:${MYSQL_ROOT_PASSWORD:-password}@db:3306/${MYSQL_DATABASE:-chicken_king}
+      - DATABASE_URL=mysql+aiomysql://root:${MYSQL_ROOT_PASSWORD:-password}@db:3306/${MYSQL_DATABASE:-chicken_king}?charset=utf8mb4
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
-      - FRONTEND_URL=${FRONTEND_URL:-http://127.0.0.1:5173}
-      - LINUX_DO_CLIENT_ID=${LINUX_DO_CLIENT_ID:-}
-      - LINUX_DO_CLIENT_SECRET=${LINUX_DO_CLIENT_SECRET:-}
-      - LINUX_DO_REDIRECT_URI=${LINUX_DO_REDIRECT_URI:-}
-      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
-      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
-      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
     depends_on:
       db:
         condition: service_healthy
@@ -57,6 +51,31 @@ services:
     volumes:
       - ./backend:/app
     restart: unless-stopped  # 自动重启
+
+  # Worker 服务（部署流程）
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: chicken_king_worker
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - ./.env
+    environment:
+      - DATABASE_URL=mysql+aiomysql://root:${MYSQL_ROOT_PASSWORD:-password}@db:3306/${MYSQL_DATABASE:-chicken_king}?charset=utf8mb4
+      - REDIS_URL=redis://redis:6379/0
+      - WORKER_API_BASE_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped  # 自动重启
+    healthcheck:
+      disable: true
 
   # React 前端 (生产模式 - Nginx 静态文件服务)
   frontend:
@@ -102,6 +121,18 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # Traefik 项目网关
+  traefik:
+    image: traefik:v2.10
+    container_name: chicken_king_traefik
+    command:
+      - --entrypoints.web.address=:8081
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
   # Nginx 反向代理
   nginx:
     image: nginx:alpine
@@ -116,6 +147,7 @@ services:
     depends_on:
       - backend
       - frontend
+      - traefik
     restart: unless-stopped
     networks:
       - default

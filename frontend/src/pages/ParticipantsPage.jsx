@@ -9,6 +9,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { useToast } from '@/components/Toast'
 import { cn } from '@/lib/utils'
 import ParticipantDetailModal from '@/components/participant/ParticipantDetailModal'
+import { useContestId } from '@/hooks/useContestId'
+import { resolveAvatarUrl } from '@/utils/avatar'
 
 /**
  * 打气类型配置
@@ -41,6 +43,7 @@ export default function ParticipantsPage() {
   const isLoggedIn = useAuthStore((s) => !!s.token)
   const navigate = useNavigate()
   const toast = useToast()
+  const { contestId } = useContestId()
 
   // 获取选手列表
   useEffect(() => {
@@ -50,10 +53,10 @@ export default function ParticipantsPage() {
 
         // 并行获取选手列表、GitHub 统计、批量打气统计、在线状态
         const [participantsRes, githubRes, cheersRes, onlineRes] = await Promise.all([
-          api.get('/contests/1/registrations/public'),
-          api.get('/contests/1/github-stats').catch(() => ({ items: [] })),
-          api.get('/contests/1/cheers/stats').catch(() => ({ data: {} })),
-          api.get('/contests/1/online-status').catch(() => ({})),
+          api.get(`/contests/${contestId}/registrations/public`),
+          api.get(`/contests/${contestId}/github-stats`).catch(() => ({ items: [] })),
+          api.get(`/contests/${contestId}/cheers/stats`).catch(() => ({ data: {} })),
+          api.get(`/contests/${contestId}/online-status`).catch(() => ({})),
         ])
 
         const items = participantsRes.items || []
@@ -90,7 +93,7 @@ export default function ParticipantsPage() {
     }
 
     fetchData()
-  }, [])
+  }, [contestId])
 
   // 在线状态轮询（30秒 ± 5秒 jitter，避免惊群）
   useEffect(() => {
@@ -109,7 +112,7 @@ export default function ParticipantsPage() {
         }
 
         try {
-          const res = await api.get('/contests/1/online-status')
+          const res = await api.get(`/contests/${contestId}/online-status`)
           if (res) setOnlineStatus(res)
         } catch {
           // 静默失败，不影响用户体验
@@ -124,7 +127,7 @@ export default function ParticipantsPage() {
     return () => {
       if (timer) clearTimeout(timer)
     }
-  }, [])
+  }, [contestId])
 
   // 搜索过滤
   useEffect(() => {
@@ -302,7 +305,7 @@ export default function ParticipantsPage() {
                     <div className="flex items-center gap-4">
                       <div className="relative">
                         <img
-                          src={participant.user?.avatar_url || `https://ui-avatars.com/api/?name=${participant.user?.username || 'U'}&background=random`}
+                          src={resolveAvatarUrl(participant.user?.avatar_url)}
                           alt={participant.user?.display_name}
                           className="w-14 h-14 rounded-xl object-cover ring-2 ring-zinc-100 dark:ring-zinc-800 group-hover:ring-primary/20 transition-all"
                         />

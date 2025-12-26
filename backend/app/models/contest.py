@@ -1,7 +1,7 @@
 """
 比赛模型
 """
-from sqlalchemy import Column, String, Text, DateTime, Enum as SQLEnum
+from sqlalchemy import Column, String, Text, DateTime, Enum as SQLEnum, Boolean
 import enum
 
 from app.models.base import BaseModel
@@ -15,12 +15,33 @@ class ContestPhase(str, enum.Enum):
     ENDED = "ended"            # 已结束
 
 
+class ContestVisibility(str, enum.Enum):
+    """比赛可见性"""
+    DRAFT = "draft"        # 草稿
+    PUBLISHED = "published"  # 已发布
+    HIDDEN = "hidden"      # 已隐藏
+
+
 class Contest(BaseModel):
     """比赛表"""
     __tablename__ = "contests"
 
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
+    visibility = Column(
+        SQLEnum(
+            'draft', 'published', 'hidden',
+            name='contestvisibility'
+        ),
+        default='published',
+        nullable=False,
+        comment="比赛可见性"
+    )
+    banner_url = Column(String(500), nullable=True, comment="比赛 Banner 图片")
+    rules_md = Column(Text, nullable=True, comment="比赛规则（Markdown）")
+    prizes_md = Column(Text, nullable=True, comment="奖项说明（Markdown）")
+    review_rules_md = Column(Text, nullable=True, comment="评审规则（Markdown）")
+    faq_md = Column(Text, nullable=True, comment="常见问题（Markdown）")
     phase = Column(
         SQLEnum(
             'upcoming', 'signup', 'submission', 'voting', 'ended',
@@ -34,6 +55,13 @@ class Contest(BaseModel):
     submit_end = Column(DateTime, nullable=True)
     vote_start = Column(DateTime, nullable=True)
     vote_end = Column(DateTime, nullable=True)
+    auto_phase_enabled = Column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="1",
+        comment="是否自动同步比赛阶段",
+    )
 
     @property
     def phase_enum(self) -> ContestPhase:

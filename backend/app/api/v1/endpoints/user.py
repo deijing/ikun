@@ -4,15 +4,19 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status, File, UploadFile
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.rate_limit import limiter, RateLimits
 from app.core.security import decode_token
 from app.core.config import settings
 from app.models.user import User
+from app.schemas.user import UserResponse, UserPublicResponse, UserUpdateRequest
+from app.services.media_service import AVATAR_MAX_BYTES, delete_media_file, save_upload_file
+from app.services.security_challenge import guard_challenge
 
 router = APIRouter()
 
@@ -21,25 +25,6 @@ VALID_ROLES = ["admin", "reviewer", "contestant", "spectator"]
 # 用户自选角色白名单（只能选这两个）
 SELECTABLE_ROLES = ["contestant", "spectator"]
 
-
-class UserResponse(BaseModel):
-    """用户响应模型"""
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    username: str
-    email: Optional[str] = None
-    display_name: Optional[str] = None
-    avatar_url: Optional[str] = None
-    role: str  # admin / reviewer / contestant / spectator
-    original_role: Optional[str] = None  # 用户的原始角色（管理员角色切换用）
-    role_selected: bool = False  # 是否已完成角色选择引导
-    role_selected_at: Optional[datetime] = None  # 角色选择时间
-    is_active: bool
-    linux_do_id: Optional[str] = None
-    linux_do_username: Optional[str] = None
-    trust_level: Optional[int] = None
-    is_silenced: bool = False
 
 
 async def get_current_user_optional(
@@ -126,18 +111,95 @@ async def get_current_user(
     return UserResponse.model_validate(current_user)
 
 
-@router.put("/me")
-async def update_current_user():
+@router.post("/me/avatar", response_model=UserResponse, summary="上传头像")
+@limiter.limit(RateLimits.UPLOAD)
+async def upload_avatar(
+    request: Request,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_dep),
+):
+    """上传头像"""
+    await guard_challenge(request, scope="upload", user_id=current_user.id)
+    media = await save_upload_file(file, "avatars", AVATAR_MAX_BYTES, owner_id=current_user.id)
+    old_url = current_user.avatar_url
+    current_user.avatar_url = media.url
+    await db.commit()
+    await db.refresh(current_user)
+    delete_media_file(old_url)
+    return UserResponse.model_validate(current_user)
+
+
+@router.put("/me", response_model=UserResponse, summary="更新当前用户信息")
+async def update_current_user(
+    payload: UserUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_dep),
+):
     """更新当前用户信息"""
-    # TODO: 实现更新逻辑
-    return {"message": "更新用户接口"}
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="未提供更新字段",
+        )
+
+    if "username" in update_data:
+        new_username = update_data.get("username")
+        if new_username and new_username != current_user.username:
+            result = await db.execute(
+                select(User).where(User.username == new_username, User.id != current_user.id)
+            )
+            exists = result.scalar_one_or_none()
+            if exists:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="用户名已被使用",
+                )
+            current_user.username = new_username
+
+    if "email" in update_data:
+        new_email = update_data.get("email")
+        if isinstance(new_email, str):
+            new_email = new_email.strip().lower()
+        if new_email != current_user.email:
+            if new_email:
+                result = await db.execute(
+                    select(User).where(User.email == new_email, User.id != current_user.id)
+                )
+                exists = result.scalar_one_or_none()
+                if exists:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="邮箱已被使用",
+                    )
+            current_user.email = new_email
+
+    if "display_name" in update_data:
+        display_name = update_data.get("display_name")
+        if isinstance(display_name, str):
+            display_name = display_name.strip()
+        current_user.display_name = display_name or None
+
+    await db.commit()
+    await db.refresh(current_user)
+    return UserResponse.model_validate(current_user)
 
 
-@router.get("/{user_id}")
-async def get_user(user_id: int):
+@router.get("/{user_id}", response_model=UserPublicResponse, summary="获取指定用户信息")
+async def get_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+):
     """获取指定用户信息"""
-    # TODO: 实现查询逻辑
-    return {"message": f"获取用户 {user_id}"}
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="用户不存在",
+        )
+    return UserPublicResponse.model_validate(user)
 
 
 class RoleSwitchRequest(BaseModel):

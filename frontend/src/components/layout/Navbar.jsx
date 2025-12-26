@@ -1,11 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Menu, X, Sun, Moon, Monitor, LogOut, User, Shield, Crown, Sparkles, Zap, Coffee, Gavel, CheckCircle, Target, GitCommit, Flame, Edit3, ChevronRight, Clock, CheckCircle2, XCircle, Award, Gift, Coins, Settings, LayoutDashboard } from 'lucide-react'
+import { Menu, X, Sun, Moon, Monitor, LogOut, User, Shield, Crown, Sparkles, Zap, Coffee, Gavel, CheckCircle, Target, GitCommit, Flame, Edit3, ChevronRight, Clock, CheckCircle2, XCircle, Award, Gift, Coins, Settings, LayoutDashboard, Upload } from 'lucide-react'
 import { useAuthStore } from '../../stores/authStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { useRegistrationStore } from '../../stores/registrationStore'
 import { Badge } from '../ui/badge'
 import logo from '@/assets/logo.png'
+import { resolveAvatarUrl } from '@/utils/avatar'
+import { useToast } from '@/components/Toast'
+import { userApi } from '@/services'
+import { IMAGE_ACCEPT, validateImageFile } from '@/utils/media'
 
 const THEME_ICONS = {
   light: Sun,
@@ -78,10 +82,13 @@ const ROLE_CONFIG = {
   },
 }
 
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024
+
 const NAV_ITEMS = [
   { path: '/', label: '首页' },
   { path: '/submissions', label: '作品展示' },
   { path: '/ranking', label: '排行榜' },
+  { path: '/announcement', label: '公示', icon: Award },
   { path: '/participants', label: '参赛选手' },
   { path: '/activity', label: '疯狂娱乐城', icon: Gift, highlight: true },
 ]
@@ -116,6 +123,10 @@ const REGISTRATION_STATUS_CONFIG = {
 function UserDropdown({ user, logout }) {
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef(null)
+  const avatarInputRef = useRef(null)
+  const [avatarUploading, setAvatarUploading] = useState(false)
+  const toast = useToast()
+  const setUser = useAuthStore((s) => s.setUser)
 
   // 获取报名状态
   const registration = useRegistrationStore((s) => s.registration)
@@ -148,6 +159,33 @@ function UserDropdown({ user, logout }) {
   const config = ROLE_CONFIG[roleKey] || ROLE_CONFIG.spectator
   const Icon = config.icon
 
+  const handleAvatarPick = () => {
+    if (avatarUploading) return
+    avatarInputRef.current?.click()
+  }
+
+  const handleAvatarChange = async (event) => {
+    const file = event.target.files?.[0] || null
+    event.target.value = ''
+    if (!file) return
+    const error = validateImageFile(file, AVATAR_MAX_BYTES)
+    if (error) {
+      toast.error(error)
+      return
+    }
+    setAvatarUploading(true)
+    try {
+      const updated = await userApi.uploadAvatar(file)
+      setUser(updated)
+      toast.success('头像已更新')
+    } catch (err) {
+      const detail = err?.response?.data?.detail || '头像上传失败'
+      toast.error(detail)
+    } finally {
+      setAvatarUploading(false)
+    }
+  }
+
   return (
     <div className="relative" ref={dropdownRef}>
       <button
@@ -163,7 +201,7 @@ function UserDropdown({ user, logout }) {
         `}>
           <div className="bg-white dark:bg-slate-900 rounded-full p-0.5 w-full h-full flex items-center justify-center">
              <img
-              src={user.avatar_url || `https://ui-avatars.com/api/?name=${user.username}&background=facc15&color=1e293b`}
+              src={resolveAvatarUrl(user?.avatar_url)}
               alt={user.display_name || user.username}
               className="w-full h-full rounded-full object-cover"
             />
@@ -218,7 +256,7 @@ function UserDropdown({ user, logout }) {
                 
                 <div className={`relative p-1 rounded-full bg-white/10 backdrop-blur-sm`}>
                    <img
-                    src={user.avatar_url || `https://ui-avatars.com/api/?name=${user.username}&background=fff&color=1e293b`}
+                    src={resolveAvatarUrl(user?.avatar_url)}
                     alt={user.display_name || user.username}
                     className="w-20 h-20 rounded-full border-2 border-white/20 shadow-xl"
                   />
@@ -252,6 +290,29 @@ function UserDropdown({ user, logout }) {
 
           {/* 详情区域 */}
           <div className="p-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept={IMAGE_ACCEPT}
+                className="hidden"
+                onChange={handleAvatarChange}
+              />
+              <button
+                type="button"
+                onClick={handleAvatarPick}
+                disabled={avatarUploading}
+                className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                  avatarUploading
+                    ? 'opacity-50 pointer-events-none bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-500'
+                    : 'bg-gradient-to-r from-slate-900 to-slate-700 text-white hover:from-slate-800 hover:to-slate-600 dark:from-white dark:to-slate-200 dark:text-slate-900'
+                }`}
+              >
+                <Upload className="w-3.5 h-3.5" />
+                {avatarUploading ? '上传中...' : '上传头像'}
+              </button>
+              <span className="text-xs text-slate-500 dark:text-slate-400">PNG/JPG/WebP/GIF，≤2MB</span>
+            </div>
             {/* 信任等级进度 - 仅 Linux.do 用户显示 */}
             {user.linux_do_id && (
               <div className="space-y-2">
@@ -416,6 +477,14 @@ function UserDropdown({ user, logout }) {
 
           {/* 底部按钮 */}
           <div className="p-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+            <Link
+              to="/account/security"
+              onClick={() => setIsOpen(false)}
+              className="w-full flex items-center justify-center space-x-2 px-4 py-3 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] mb-2"
+            >
+              <Settings className="w-4 h-4" />
+              <span>账号安全</span>
+            </Link>
             <button
               type="button"
               onClick={() => {
@@ -520,12 +589,20 @@ export default function Navbar() {
                 <UserDropdown user={user} logout={logout} />
               </div>
             ) : (
-              <Link
-                to="/login"
-                className="bg-yellow-500 text-slate-900 px-4 py-2 rounded-full font-bold hover:bg-yellow-400 transition-all"
-              >
-                登录
-              </Link>
+              <div className="flex items-center space-x-3">
+                <Link
+                  to="/login"
+                  className="bg-yellow-500 text-slate-900 px-4 py-2 rounded-full font-bold hover:bg-yellow-400 transition-all"
+                >
+                  登录
+                </Link>
+                <Link
+                  to="/register"
+                  className="px-4 py-2 rounded-full font-bold border border-yellow-500 text-yellow-600 hover:bg-yellow-50 transition-all dark:text-yellow-400 dark:border-yellow-400 dark:hover:bg-yellow-900/20"
+                >
+                  注册
+                </Link>
+              </div>
             )}
 
             <ThemeToggleButton />
@@ -638,6 +715,14 @@ export default function Navbar() {
                     </Link>
                   </>
                 )}
+                <Link
+                  to="/account/security"
+                  onClick={() => setIsMenuOpen(false)}
+                  className="flex items-center gap-2 px-3 py-2 rounded-md text-base font-medium text-slate-600 dark:text-slate-300"
+                >
+                  <Settings className="w-4 h-4" />
+                  账号安全
+                </Link>
                 <button
                   type="button"
                   onClick={() => {
@@ -650,13 +735,22 @@ export default function Navbar() {
                 </button>
               </>
             ) : (
-              <Link
-                to="/login"
-                onClick={() => setIsMenuOpen(false)}
-                className="block px-3 py-2 rounded-md text-base font-medium text-yellow-500 dark:text-yellow-400"
-              >
-                登录
-              </Link>
+              <>
+                <Link
+                  to="/login"
+                  onClick={() => setIsMenuOpen(false)}
+                  className="block px-3 py-2 rounded-md text-base font-medium text-yellow-500 dark:text-yellow-400"
+                >
+                  登录
+                </Link>
+                <Link
+                  to="/register"
+                  onClick={() => setIsMenuOpen(false)}
+                  className="block px-3 py-2 rounded-md text-base font-medium text-yellow-500 dark:text-yellow-400"
+                >
+                  注册
+                </Link>
+              </>
             )}
           </div>
         </div>

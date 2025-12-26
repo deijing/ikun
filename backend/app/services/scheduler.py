@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_maker
+from app.models.contest import Contest, ContestPhase
 from app.models.registration import Registration, RegistrationStatus
 from app.models.github_stats import GitHubStats, GitHubSyncLog
 from app.services.github_service import github_service, GitHubService
@@ -187,6 +188,89 @@ async def generate_daily_report():
             logger.error(f"生成每日战报异常: {e}")
 
 
+def resolve_contest_phase(contest: Contest, now: datetime) -> Optional[str]:
+    """根据时间配置计算比赛阶段（无时间配置则返回 None）"""
+    if not any([
+        contest.signup_start,
+        contest.signup_end,
+        contest.submit_start,
+        contest.submit_end,
+        contest.vote_start,
+        contest.vote_end,
+    ]):
+        return None
+
+    if contest.vote_end and now >= contest.vote_end:
+        return ContestPhase.ENDED.value
+
+    if contest.vote_start and now >= contest.vote_start:
+        if contest.vote_end is None or now < contest.vote_end:
+            return ContestPhase.VOTING.value
+
+    if contest.submit_start and now >= contest.submit_start:
+        if contest.submit_end is None or now < contest.submit_end:
+            return ContestPhase.SUBMISSION.value
+
+    if contest.signup_start and now >= contest.signup_start:
+        if contest.signup_end is None or now < contest.signup_end:
+            return ContestPhase.SIGNUP.value
+
+    if contest.submit_end and now >= contest.submit_end and contest.vote_start is None:
+        return ContestPhase.ENDED.value
+
+    if contest.signup_end and now >= contest.signup_end and contest.submit_start is None and contest.vote_start is None:
+        return ContestPhase.ENDED.value
+
+    starts = [value for value in [contest.signup_start, contest.submit_start, contest.vote_start] if value]
+    if starts and now < min(starts):
+        return ContestPhase.UPCOMING.value
+
+    return ContestPhase.UPCOMING.value
+
+
+async def sync_contest_phases():
+    """
+    同步比赛阶段
+
+    根据比赛配置的时间窗口自动更新阶段。
+    """
+    logger.info("开始同步比赛阶段...")
+
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(select(Contest))
+            contests = result.scalars().all()
+            if not contests:
+                logger.info("没有需要同步的比赛")
+                return
+
+            now = datetime.now()
+            updated = 0
+            for contest in contests:
+                if hasattr(contest, "auto_phase_enabled") and not contest.auto_phase_enabled:
+                    continue
+                target_phase = resolve_contest_phase(contest, now)
+                if not target_phase:
+                    continue
+                if contest.phase != target_phase:
+                    logger.info(
+                        "比赛 %s 阶段变更：%s -> %s",
+                        contest.id,
+                        contest.phase,
+                        target_phase,
+                    )
+                    contest.phase = target_phase
+                    updated += 1
+
+            if updated:
+                await db.commit()
+            logger.info("比赛阶段同步完成：更新 %s 个", updated)
+
+        except Exception as e:
+            logger.error(f"比赛阶段同步异常: {e}")
+            await db.rollback()
+
+
 def init_scheduler():
     """初始化定时任务调度器"""
     global scheduler
@@ -208,6 +292,15 @@ def init_scheduler():
         CronTrigger(hour=23, minute=55),
         id="daily_report",
         name="生成每日战报",
+        replace_existing=True,
+    )
+
+    # 每分钟同步比赛阶段
+    scheduler.add_job(
+        sync_contest_phases,
+        CronTrigger(minute="*/1"),
+        id="sync_contest_phases",
+        name="同步比赛阶段",
         replace_existing=True,
     )
 

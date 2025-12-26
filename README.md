@@ -136,8 +136,21 @@ npm run dev
 ### 4. Docker 一键启动
 
 ```bash
+# 复制环境变量模板到项目根目录（Docker Compose 会读取此 .env）
+cp .env.production.example .env
+# 编辑 .env 填写真实配置（如 MySQL/SECRET_KEY/OAuth 等）
+
 docker-compose up -d
 ```
+
+生产环境可使用：
+
+```bash
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+> 说明：`docker-compose.yml` / `docker-compose.prod.yml` 都会从项目根目录读取 `.env`，
+> 并通过 `env_file` 注入到容器中。`DATABASE_URL/REDIS_URL` 由 Compose 组合生成，无需在 `.env` 中重复填写。
 
 ## 网站统计（Umami）
 
@@ -180,7 +193,16 @@ VITE_UMAMI_WEBSITE_ID=你的网站ID
 
 ## 环境变量
 
+### Docker Compose（项目根目录 `.env`）
+
+- 适用于 `docker-compose.yml` / `docker-compose.prod.yml`
+- 入口文件：项目根目录 `.env`（可从 `.env.production.example` 复制并填写）
+- 由 Compose 注入到 backend/worker 容器
+- `DATABASE_URL/REDIS_URL` 已在 Compose 中拼接，无需在 `.env` 里写
+
 ### 后端 (`backend/.env`)
+
+> 仅用于本地非 Docker 启动（如 `uvicorn` 直接运行）
 
 ```bash
 DEBUG=true

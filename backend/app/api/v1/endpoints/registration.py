@@ -20,6 +20,8 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.models.contest import Contest, ContestPhase
+from app.models.project import Project, ProjectStatus
+from app.models.project_submission import ProjectSubmission, ProjectSubmissionStatus
 from app.models.registration import Registration, RegistrationStatus
 from app.models.user import User, UserRole
 from app.schemas.registration import (
@@ -27,6 +29,7 @@ from app.schemas.registration import (
     RegistrationResponse,
     RegistrationUpdate,
 )
+from app.services.worker_queue import enqueue_worker_action
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -370,8 +373,8 @@ async def update_my_registration(
 @router.delete(
     "/contests/{contest_id}/registrations/me",
     response_model=RegistrationResponse,
-    summary="撤回报名",
-    description="撤回当前登录用户的报名（软删除，状态变为 withdrawn）。",
+    summary="撤回报名/退赛",
+    description="报名期内可撤回报名；报名期结束且已审核通过时视为退赛（状态变为 withdrawn）。",
 )
 async def withdraw_my_registration(
     contest_id: int,
@@ -379,7 +382,7 @@ async def withdraw_my_registration(
     current_user: User = Depends(get_current_user),
 ):
     """撤回报名（软删除）"""
-    await get_contest_or_404(db, contest_id)
+    contest = await get_contest_or_404(db, contest_id)
 
     registration = await get_user_registration(db, contest_id, current_user.id)
 
@@ -394,6 +397,36 @@ async def withdraw_my_registration(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="报名已撤回"
         )
+
+    is_retired = (
+        contest.phase != ContestPhase.SIGNUP.value
+        and registration.status == RegistrationStatus.APPROVED.value
+    )
+    status_message = "已退赛，已下线" if is_retired else "报名已撤回，已下线"
+
+    project_result = await db.execute(
+        select(Project).where(
+            Project.contest_id == contest_id,
+            Project.user_id == current_user.id,
+        )
+    )
+    project = project_result.scalar_one_or_none()
+    if project is not None:
+        if project.current_submission_id:
+            submission_result = await db.execute(
+                select(ProjectSubmission).where(
+                    ProjectSubmission.id == project.current_submission_id
+                )
+            )
+            submission = submission_result.scalar_one_or_none()
+            if submission is not None:
+                await enqueue_worker_action("stop", submission.id)
+                submission.status = ProjectSubmissionStatus.STOPPED.value
+                submission.status_message = status_message
+                submission.error_code = "registration_withdrawn"
+                submission.failed_at = None
+
+        project.status = ProjectStatus.OFFLINE.value
 
     registration.status = RegistrationStatus.WITHDRAWN.value
     await db.commit()

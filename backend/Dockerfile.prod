@@ -39,6 +39,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 # 复制应用代码
 COPY --chown=appuser:appuser . .
 
+# 预创建媒体目录，避免首次挂载权限问题
+RUN mkdir -p /app/app/uploads/media \
+    && chown -R appuser:appuser /app/app/uploads
+
 # 切换到非 root 用户
 USER appuser
 

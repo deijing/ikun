@@ -13,6 +13,7 @@ import { useToast } from '@/components/Toast'
 import { cn } from '@/lib/utils'
 import api from '@/services/api'
 import { lotteryApi } from '@/services'
+import { resolveAvatarUrl } from '@/utils/avatar'
 import {
   Github,
   GitCommit,
@@ -692,7 +693,7 @@ export default function ParticipantDetailModal({ participant, open, onClose, ini
         <div className="relative bg-zinc-900 text-white p-6 pb-20">
           <div className="flex items-start gap-4">
             <img
-              src={participant.user?.avatar_url || `https://ui-avatars.com/api/?name=${participant.user?.username || 'U'}&background=random`}
+              src={resolveAvatarUrl(participant.user?.avatar_url)}
               alt={participant.user?.display_name}
               className="w-16 h-16 rounded-xl object-cover ring-2 ring-white/20"
             />
@@ -1000,7 +1001,7 @@ export default function ParticipantDetailModal({ participant, open, onClose, ini
                       </h4>
                       <div className="flex gap-3">
                         <img
-                          src={user?.avatar_url || `https://ui-avatars.com/api/?name=${user?.username || 'U'}&background=random`}
+                          src={resolveAvatarUrl(user?.avatar_url)}
                           alt={user?.display_name}
                           className="w-10 h-10 rounded-lg flex-shrink-0"
                         />
@@ -1067,7 +1068,7 @@ export default function ParticipantDetailModal({ participant, open, onClose, ini
                           >
                             <div className="flex items-start gap-3">
                               <img
-                                src={msg.user?.avatar_url || `https://ui-avatars.com/api/?name=${msg.user?.username || 'U'}&background=random`}
+                                src={resolveAvatarUrl(msg.user?.avatar_url)}
                                 alt={msg.user?.display_name}
                                 className="w-8 h-8 rounded-lg"
                               />

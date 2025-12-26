@@ -7,10 +7,14 @@ from app.schemas.registration import (
     RegistrationResponse,
     UserPublic,
 )
+from app.schemas.user import UserPublicResponse, UserResponse, UserUpdateRequest
 
 __all__ = [
     "RegistrationCreate",
     "RegistrationUpdate",
     "RegistrationResponse",
     "UserPublic",
+    "UserPublicResponse",
+    "UserResponse",
+    "UserUpdateRequest",
 ]

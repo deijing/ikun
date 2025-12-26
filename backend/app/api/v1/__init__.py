@@ -6,7 +6,8 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     auth, contest, submission, vote, user, registration,
     github, cheer, quota, achievement, points, lottery, prediction, admin,
-    review_center, announcement, exchange, task, slot_machine, gacha, puzzle
+    review_center, announcement, exchange, task, slot_machine, gacha, puzzle,
+    project, project_review_center, media
 )
 
 router = APIRouter()
@@ -15,6 +16,8 @@ router.include_router(auth.router, prefix="/auth", tags=["认证"])
 router.include_router(user.router, prefix="/users", tags=["用户"])
 router.include_router(contest.router, prefix="/contests", tags=["比赛"])
 router.include_router(submission.router, prefix="/submissions", tags=["作品"])
+router.include_router(project.router, tags=["作品部署"])
+router.include_router(media.router, prefix="/media", tags=["媒体文件"])
 router.include_router(vote.router, prefix="/votes", tags=["投票"])
 router.include_router(registration.router, tags=["报名"])
 router.include_router(github.router, tags=["GitHub统计"])
@@ -26,6 +29,7 @@ router.include_router(lottery.router, prefix="/lottery", tags=["抽奖系统"])
 router.include_router(prediction.router, prefix="/prediction", tags=["竞猜系统"])
 router.include_router(admin.router, prefix="/admin", tags=["管理后台"])
 router.include_router(review_center.router, prefix="/review-center", tags=["评审中心"])
+router.include_router(project_review_center.router, prefix="/review-center", tags=["评审中心-作品"])
 router.include_router(announcement.router, prefix="/announcements", tags=["公告系统"])
 router.include_router(exchange.router, prefix="/exchange", tags=["积分兑换"])
 router.include_router(gacha.router, prefix="/gacha", tags=["扭蛋机"])

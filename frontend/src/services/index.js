@@ -7,6 +7,12 @@ export const authApi = {
   register: (data) => api.post('/auth/register', data),
   login: (data) => api.post('/auth/login', data),
   refresh: () => api.post('/auth/refresh'),
+  forgotPassword: (data) => api.post('/auth/password/forgot', data),
+  resetPassword: (data) => api.post('/auth/password/reset', data),
+  changePassword: (data) => api.post('/auth/password/change', data),
+  setPassword: (data) => api.post('/auth/password/set', data),
+  bindLinuxDo: (data) => api.post('/auth/linuxdo/bind', data),
+  bindGitHub: (data) => api.post('/auth/github/bind', data),
 }
 
 /**
@@ -16,6 +22,13 @@ export const userApi = {
   getMe: () => api.get('/users/me'),
   updateMe: (data) => api.put('/users/me', data),
   getUser: (id) => api.get(`/users/${id}`),
+  uploadAvatar: (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post('/users/me/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
   // 角色选择（新用户引导）
   selectRole: (role) => api.post('/users/me/select-role', { role }),
 }
@@ -26,13 +39,58 @@ export const userApi = {
 export const contestApi = {
   list: () => api.get('/contests'),
   get: (id) => api.get(`/contests/${id}`),
+  getStats: (id) => api.get(`/contests/${id}/stats`),
+  getCurrent: (params) => api.get('/contests/current', { params }),
   signup: (id) => api.post(`/contests/${id}/signup`),
-  getRanking: (id) => api.get(`/contests/${id}/ranking`),
+  getRanking: (id, params) => api.get(`/contests/${id}/ranking`, { params }),
+  getRankingDetail: (id, projectId) => api.get(`/contests/${id}/ranking/${projectId}`),
+  getInteractionLeaderboard: (id, params) => api.get(`/contests/${id}/interaction-leaderboard`, { params }),
+  uploadBanner: (contestId, file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post(`/contests/${contestId}/banner`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+}
+
+/**
+ * 作品部署相关 API
+ */
+export const projectApi = {
+  list: (params) => api.get('/projects', { params }),
+  create: (data) => api.post('/projects', data),
+  update: (projectId, data) => api.patch(`/projects/${projectId}`, data),
+  uploadCover: (projectId, file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post(`/projects/${projectId}/cover`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  deleteCover: (projectId) => api.delete(`/projects/${projectId}/cover`),
+  uploadScreenshot: (projectId, file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post(`/projects/${projectId}/screenshots`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  deleteScreenshot: (projectId, url) =>
+    api.delete(`/projects/${projectId}/screenshots`, { params: { url } }),
+  submitImage: (projectId, data) => api.post(`/projects/${projectId}/submissions`, data),
+  listSubmissions: (projectId, params) => api.get(`/projects/${projectId}/submissions`, { params }),
+  getCurrentSubmission: (projectId) => api.get(`/projects/${projectId}/submissions/current`),
+  getAccess: (projectId) => api.get(`/projects/${projectId}/access`),
+  like: (projectId) => api.post(`/projects/${projectId}/like`),
+  unlike: (projectId) => api.delete(`/projects/${projectId}/like`),
+  favorite: (projectId) => api.post(`/projects/${projectId}/favorite`),
+  unfavorite: (projectId) => api.delete(`/projects/${projectId}/favorite`),
 }
 
 /**
  * 作品提交相关 API
- * 支持5种必填材料：项目源码、演示视频、项目文档、API调用证明、参赛报名表
+ * 支持5种材料：项目源码、演示视频（可选）、项目文档、API调用证明、参赛报名表
  */
 export const submissionApi = {
   // 获取作品列表
@@ -222,6 +280,7 @@ export const adminApi2 = {
   // 通用方法 - 用于动态 API 调用
   get: (url, config) => api.get(url, config),
   post: (url, data, config) => api.post(url, data, config),
+  patch: (url, data, config) => api.patch(url, data, config),
   put: (url, data, config) => api.put(url, data, config),
   delete: (url, config) => api.delete(url, config),
 
@@ -234,6 +293,24 @@ export const adminApi2 = {
   updateUser: (userId, data) => api.put(`/admin/users/${userId}`, data),
   adjustPoints: (userId, data) => api.post(`/admin/users/${userId}/points`, data),
   getUserPointsHistory: (userId, params) => api.get(`/admin/users/${userId}/points-history`, { params }),
+
+  // 作品评审分配
+  getProject: (projectId) => api.get(`/projects/${projectId}`),
+  getProjectReviewers: (projectId) => api.get(`/admin/projects/${projectId}/reviewers`),
+  assignProjectReviewers: (projectId, reviewerIds) =>
+    api.post(`/admin/projects/${projectId}/reviewers`, { reviewer_ids: reviewerIds }),
+  removeProjectReviewer: (projectId, reviewerId) =>
+    api.delete(`/admin/projects/${projectId}/reviewers/${reviewerId}`),
+
+  // 作品部署管理
+  offlineProject: (projectId, message) =>
+    api.post(`/admin/projects/${projectId}/offline`, { message }),
+  redeployProjectSubmission: (submissionId, message) =>
+    api.post(`/admin/project-submissions/${submissionId}/redeploy`, { message }),
+  stopProjectSubmission: (submissionId, message) =>
+    api.post(`/admin/project-submissions/${submissionId}/stop`, { message }),
+  getProjectSubmissionLogs: (submissionId) =>
+    api.get(`/admin/project-submissions/${submissionId}/logs`),
 
   // 签到配置
   getSigninConfig: () => api.get('/admin/signin/config'),
@@ -309,21 +386,19 @@ export const slotMachineApi = {
 }
 
 /**
- * 评审中心 API
+ * 评审中心 API（Project 体系）
  */
 export const reviewCenterApi = {
   // 获取评审员统计
   getStats: () => api.get('/review-center/stats'),
   // 获取待评审作品列表
-  getSubmissions: (params) => api.get('/review-center/submissions', { params }),
+  getSubmissions: (params) => api.get('/review-center/projects', { params }),
   // 获取作品详情
-  getSubmission: (id) => api.get(`/review-center/submissions/${id}`),
+  getSubmission: (id) => api.get(`/review-center/projects/${id}`),
   // 提交/更新评分
-  submitReview: (submissionId, data) => api.put(`/review-center/submissions/${submissionId}/review`, data),
+  submitReview: (projectId, data) => api.post(`/review-center/projects/${projectId}/score`, data),
   // 删除评分
-  deleteReview: (submissionId) => api.delete(`/review-center/submissions/${submissionId}/review`),
-  // 管理员：查看作品所有评分明细
-  getSubmissionReviews: (submissionId) => api.get(`/review-center/admin/submissions/${submissionId}/reviews`),
+  deleteReview: (projectId) => api.delete(`/review-center/projects/${projectId}/score`),
 }
 
 /**

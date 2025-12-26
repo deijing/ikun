@@ -2,21 +2,34 @@
 认证相关 API
 """
 import base64
+import hashlib
+import hmac
 import json
 import re
+import logging
+from datetime import datetime, timedelta
 from secrets import token_urlsafe
 from typing import Optional
 from urllib.parse import urlencode, quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse, JSONResponse
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from sqlalchemy import select, or_, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import create_access_token
+from app.core.rate_limit import limiter, RateLimits
+from app.core.security import create_access_token, decode_token, get_password_hash, verify_password
 from app.models.user import User
+from app.models.password_reset import PasswordResetToken
+from app.schemas.user import UserResponse
+from app.api.v1.endpoints.user import get_current_user_dep
+from app.services.email_service import send_email, EmailServiceError
+from app.services.security_challenge import guard_challenge
+from app.services.user_merge_service import merge_users
 from app.services.linux_do_oauth import (
     LinuxDoOAuthError,
     exchange_code_for_token,
@@ -30,13 +43,16 @@ from app.services.github_oauth import (
     fetch_github_emails,
     get_primary_email,
 )
+from app.services.media_service import AVATAR_MAX_BYTES, download_image_to_media, is_local_media_url
 from app.services.points_service import PointsService
 from app.models.points import PointsReason
+from app.services.log_service import log_login, log_register
 
 # 新用户注册奖励积分
 REGISTER_BONUS_POINTS = 500
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_next_path(next_path: Optional[str]) -> str:
@@ -65,6 +81,27 @@ def _sanitize_next_path(next_path: Optional[str]) -> str:
 
     # 返回 URL 编码后的路径
     return quote(next_path, safe="/")
+
+
+def _validate_password_value(value: str) -> str:
+    """校验密码格式"""
+    if re.search(r"\s", value):
+        raise ValueError("密码不能包含空白字符")
+    if len(value.encode("utf-8")) > 72:
+        raise ValueError("密码长度不能超过 72 字节")
+    return value
+
+
+def _hash_reset_token(token: str) -> str:
+    """生成重置令牌哈希"""
+    secret = (settings.SECRET_KEY or "").encode("utf-8")
+    return hmac.new(secret, token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _build_password_reset_link(token: str) -> str:
+    """构建前端重置链接"""
+    frontend = settings.FRONTEND_URL.rstrip("/")
+    return f"{frontend}/reset-password?token={token}"
 
 
 def _b64url_json(data: dict) -> str:
@@ -127,7 +164,14 @@ async def _upsert_linuxdo_user(db: AsyncSession, userinfo: dict) -> User:
     linux_username = (userinfo.get("username") or "").strip()
     display_name = (userinfo.get("name") or "").strip() or None
     avatar_template = userinfo.get("avatar_template") or None
-    avatar_url = normalize_avatar_url(avatar_template)
+    download_url = normalize_avatar_url(avatar_template)
+    avatar_url = None
+    if download_url and (user is None or not is_local_media_url(user.avatar_url)):
+        try:
+            media = await download_image_to_media(download_url, "avatars", AVATAR_MAX_BYTES)
+            avatar_url = media.url if media else None
+        except HTTPException as exc:
+            logger.warning("Linux.do 头像下载失败: %s", getattr(exc, "detail", exc))
     active = bool(userinfo.get("active", True))
     trust_level = userinfo.get("trust_level")
     silenced = bool(userinfo.get("silenced", False))
@@ -181,6 +225,42 @@ async def _upsert_linuxdo_user(db: AsyncSession, userinfo: dict) -> User:
         )
 
     return user
+
+
+async def _apply_linuxdo_profile(target_user: User, userinfo: dict) -> str:
+    """绑定时更新 Linux.do 用户信息"""
+    linux_do_id = str(userinfo.get("id"))
+    if not linux_do_id or linux_do_id == "None":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Linux.do 用户信息缺少 id",
+        )
+
+    linux_username = (userinfo.get("username") or "").strip()
+    display_name = (userinfo.get("name") or "").strip() or None
+    avatar_template = userinfo.get("avatar_template") or None
+    download_url = normalize_avatar_url(avatar_template)
+    avatar_url = None
+    if download_url and (not target_user.avatar_url or not is_local_media_url(target_user.avatar_url)):
+        try:
+            media = await download_image_to_media(download_url, "avatars", AVATAR_MAX_BYTES)
+            avatar_url = media.url if media else None
+        except HTTPException as exc:
+            logger.warning("Linux.do 头像下载失败: %s", getattr(exc, "detail", exc))
+
+    active = bool(userinfo.get("active", True))
+    trust_level = userinfo.get("trust_level")
+    silenced = bool(userinfo.get("silenced", False))
+
+    target_user.linux_do_id = linux_do_id
+    target_user.linux_do_username = linux_username or target_user.linux_do_username
+    target_user.display_name = display_name or target_user.display_name
+    target_user.linux_do_avatar_template = avatar_template or target_user.linux_do_avatar_template
+    target_user.avatar_url = avatar_url or target_user.avatar_url
+    target_user.is_active = active
+    target_user.trust_level = int(trust_level) if trust_level is not None else target_user.trust_level
+    target_user.is_silenced = silenced
+    return linux_do_id
 
 
 async def _generate_unique_username_for_github(
@@ -237,7 +317,14 @@ async def _upsert_github_user(db: AsyncSession, userinfo: dict, email: Optional[
     # 解析用户信息
     github_username = (userinfo.get("login") or "").strip()
     display_name = (userinfo.get("name") or "").strip() or None
-    avatar_url = userinfo.get("avatar_url") or None
+    avatar_source_url = userinfo.get("avatar_url") or None
+    avatar_url = None
+    if avatar_source_url and (user is None or not is_local_media_url(user.avatar_url)):
+        try:
+            media = await download_image_to_media(avatar_source_url, "avatars", AVATAR_MAX_BYTES)
+            avatar_url = media.url if media else None
+        except HTTPException as exc:
+            logger.warning("GitHub 头像下载失败: %s", getattr(exc, "detail", exc))
     github_email = email or userinfo.get("email")
 
     is_new_user = False
@@ -288,25 +375,468 @@ async def _upsert_github_user(db: AsyncSession, userinfo: dict, email: Optional[
     return user
 
 
-@router.post("/register")
-async def register():
+async def _apply_github_profile(
+    target_user: User,
+    userinfo: dict,
+    email: Optional[str] = None,
+) -> str:
+    """绑定时更新 GitHub 用户信息"""
+    github_id = str(userinfo.get("id"))
+    if not github_id or github_id == "None":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="GitHub 用户信息缺少 id",
+        )
+
+    github_username = (userinfo.get("login") or "").strip()
+    display_name = (userinfo.get("name") or "").strip() or None
+    avatar_source_url = userinfo.get("avatar_url") or None
+    avatar_url = None
+    if avatar_source_url and (not target_user.avatar_url or not is_local_media_url(target_user.avatar_url)):
+        try:
+            media = await download_image_to_media(avatar_source_url, "avatars", AVATAR_MAX_BYTES)
+            avatar_url = media.url if media else None
+        except HTTPException as exc:
+            logger.warning("GitHub 头像下载失败: %s", getattr(exc, "detail", exc))
+
+    github_email = email or userinfo.get("email")
+
+    target_user.github_id = github_id
+    target_user.github_username = github_username or target_user.github_username
+    target_user.github_avatar_url = avatar_url or target_user.github_avatar_url
+    target_user.github_email = github_email or target_user.github_email
+    target_user.display_name = display_name or target_user.display_name
+    target_user.avatar_url = avatar_url or target_user.avatar_url
+    if not target_user.email and github_email:
+        target_user.email = github_email
+    return github_id
+
+
+class RegisterRequest(BaseModel):
+    """本地注册请求"""
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=8, max_length=72)
+    email: Optional[EmailStr] = None
+    display_name: Optional[str] = Field(None, max_length=100)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("用户名不能为空")
+        if re.search(r"\s", value):
+            raise ValueError("用户名不能包含空白字符")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_password_value(value)
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_display_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        value = value.strip()
+        return value or None
+
+
+class LoginRequest(BaseModel):
+    """本地登录请求"""
+    model_config = ConfigDict(populate_by_name=True)
+
+    account: str = Field(..., alias="username", min_length=2, max_length=255)
+    password: str = Field(..., min_length=8, max_length=72)
+
+    @field_validator("account")
+    @classmethod
+    def validate_account(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("账号不能为空")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_password_value(value)
+
+
+class PasswordForgotRequest(BaseModel):
+    """忘记密码请求"""
+    email: EmailStr
+
+
+class PasswordResetRequest(BaseModel):
+    """密码重置请求"""
+    token: str = Field(..., min_length=10, max_length=255)
+    password: str = Field(..., min_length=8, max_length=72)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_password_value(value)
+
+
+class PasswordChangeRequest(BaseModel):
+    """修改密码请求"""
+    old_password: str = Field(..., min_length=8, max_length=72)
+    new_password: str = Field(..., min_length=8, max_length=72)
+
+    @field_validator("old_password", "new_password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_password_value(value)
+
+
+class PasswordSetRequest(BaseModel):
+    """设置密码请求（OAuth 用户）"""
+    password: str = Field(..., min_length=8, max_length=72)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_password_value(value)
+
+
+class OAuthBindInitRequest(BaseModel):
+    """绑定第三方账号请求"""
+    next: Optional[str] = None
+
+
+class AuthTokenResponse(BaseModel):
+    """认证返回"""
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
+
+@router.post("/register", response_model=AuthTokenResponse, summary="本地注册")
+@limiter.limit(RateLimits.AUTH)
+async def register(
+    payload: RegisterRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """用户注册"""
-    # TODO: 实现本地注册逻辑
-    return {"message": "注册接口"}
+    await guard_challenge(request, scope="auth")
+    username = payload.username.strip()
+    email = payload.email.lower() if payload.email else None
+
+    conditions = [User.username == username]
+    if email:
+        conditions.append(User.email == email)
+    result = await db.execute(select(User).where(or_(*conditions)))
+    existing = result.scalar_one_or_none()
+    if existing:
+        if existing.username == username:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="用户名已被使用",
+            )
+        if email and existing.email == email:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="邮箱已被使用",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="账号已存在",
+        )
+
+    user = User(
+        email=email,
+        username=username,
+        hashed_password=get_password_hash(payload.password),
+        display_name=payload.display_name,
+        is_active=True,
+    )
+    db.add(user)
+    try:
+        await db.flush()
+        await log_register(db, user.id, user.username, request=request)
+        if REGISTER_BONUS_POINTS > 0:
+            await PointsService.add_points(
+                db=db,
+                user_id=user.id,
+                amount=REGISTER_BONUS_POINTS,
+                reason=PointsReason.REGISTER_BONUS,
+                ref_type="register",
+                ref_id=user.id,
+                description=f"新用户注册奖励 {REGISTER_BONUS_POINTS} 积分",
+                auto_commit=False,
+            )
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="用户名或邮箱已被使用",
+        )
+
+    await db.refresh(user)
+    jwt_token = create_access_token({
+        "sub": str(user.id),
+        "provider": "local",
+        "username": user.username,
+    })
+    return AuthTokenResponse(
+        access_token=jwt_token,
+        token_type="bearer",
+        user=UserResponse.model_validate(user),
+    )
 
 
-@router.post("/login")
-async def login():
+@router.post("/login", response_model=AuthTokenResponse, summary="本地登录")
+@limiter.limit(RateLimits.AUTH)
+async def login(
+    payload: LoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """用户登录"""
-    # TODO: 实现本地登录逻辑
-    return {"message": "登录接口"}
+    await guard_challenge(request, scope="auth")
+    account = payload.account.strip()
+    result = await db.execute(
+        select(User).where(or_(User.username == account, User.email == account))
+    )
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户名或密码错误",
+        )
+
+    if not user.hashed_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该账号未设置密码，请使用 OAuth 登录",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="账号已被禁用",
+        )
+
+    if not verify_password(payload.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户名或密码错误",
+        )
+
+    await log_login(db, user.id, request=request, success=True)
+    await db.commit()
+
+    jwt_token = create_access_token({
+        "sub": str(user.id),
+        "provider": "local",
+        "username": user.username,
+    })
+    return AuthTokenResponse(
+        access_token=jwt_token,
+        token_type="bearer",
+        user=UserResponse.model_validate(user),
+    )
 
 
-@router.post("/refresh")
-async def refresh_token():
+@router.post("/refresh", response_model=AuthTokenResponse, summary="刷新 Token")
+@limiter.limit(RateLimits.AUTH)
+async def refresh_token(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """刷新 Token"""
-    # TODO: 实现 Token 刷新
-    return {"message": "Token 刷新接口"}
+    await guard_challenge(request, scope="auth")
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="请先登录",
+        )
+    token = auth_header.split(" ", 1)[1].strip()
+    payload = decode_token(token)
+    if not payload or "sub" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录已过期，请重新登录",
+        )
+
+    try:
+        user_id = int(payload["sub"])
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的认证信息",
+        )
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户不存在",
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="账号已被禁用",
+        )
+
+    token_payload = {
+        "sub": str(user.id),
+        "provider": payload.get("provider") or "local",
+        "username": user.username,
+    }
+    if payload.get("linux_do_id"):
+        token_payload["linux_do_id"] = payload.get("linux_do_id")
+
+    jwt_token = create_access_token(token_payload)
+    return AuthTokenResponse(
+        access_token=jwt_token,
+        token_type="bearer",
+        user=UserResponse.model_validate(user),
+    )
+
+
+@router.post("/password/forgot", summary="忘记密码")
+@limiter.limit(RateLimits.AUTH)
+async def forgot_password(
+    payload: PasswordForgotRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """发送重置密码链接"""
+    await guard_challenge(request, scope="auth")
+    email = payload.email.strip().lower()
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if user and user.is_active:
+        token = token_urlsafe(32)
+        token_hash = _hash_reset_token(token)
+        expires_at = datetime.utcnow() + timedelta(minutes=settings.PASSWORD_RESET_TOKEN_TTL_MINUTES)
+        now = datetime.utcnow()
+
+        await db.execute(
+            update(PasswordResetToken)
+            .where(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.used_at.is_(None),
+            )
+            .values(used_at=now)
+        )
+
+        db.add(PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+            requested_ip=request.client.host if request.client else None,
+        ))
+        await db.commit()
+
+        reset_link = _build_password_reset_link(token)
+        subject = "重置密码"
+        content = (
+            "你好，\n\n"
+            f"请在 {settings.PASSWORD_RESET_TOKEN_TTL_MINUTES} 分钟内通过以下链接重置密码：\n"
+            f"{reset_link}\n\n"
+            "如果不是你本人操作，请忽略本邮件。"
+        )
+        try:
+            if settings.SMTP_HOST and settings.SMTP_FROM_EMAIL:
+                background_tasks.add_task(send_email, user.email, subject, content, False)
+            else:
+                raise EmailServiceError("SMTP 未配置")
+        except EmailServiceError:
+            if settings.DEBUG:
+                return {"message": "重置链接已生成", "reset_link": reset_link}
+            logger.warning("SMTP 未配置，重置链接未发送")
+
+    return {"message": "如果邮箱存在，重置链接已发送"}
+
+
+@router.post("/password/reset", summary="重置密码")
+@limiter.limit(RateLimits.AUTH)
+async def reset_password(
+    payload: PasswordResetRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """使用重置令牌设置新密码"""
+    await guard_challenge(request, scope="auth")
+    token_hash = _hash_reset_token(payload.token)
+    result = await db.execute(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+    )
+    record = result.scalar_one_or_none()
+    now = datetime.utcnow()
+
+    if record is None or record.used_at or record.expires_at < now:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="重置链接无效或已过期",
+        )
+
+    user = await db.get(User, record.user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="用户不存在",
+        )
+
+    user.hashed_password = get_password_hash(payload.password)
+    record.used_at = now
+    await db.commit()
+
+    return {"message": "密码已重置"}
+
+
+@router.post("/password/change", summary="修改密码")
+@limiter.limit(RateLimits.AUTH)
+async def change_password(
+    payload: PasswordChangeRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_dep),
+):
+    """修改当前用户密码"""
+    if not current_user.hashed_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该账号尚未设置本地密码",
+        )
+    if not verify_password(payload.old_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="旧密码不正确",
+        )
+    current_user.hashed_password = get_password_hash(payload.new_password)
+    await db.commit()
+    return {"message": "密码已更新"}
+
+
+@router.post("/password/set", summary="设置本地密码")
+@limiter.limit(RateLimits.AUTH)
+async def set_password(
+    payload: PasswordSetRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_dep),
+):
+    """为 OAuth 用户设置本地密码"""
+    if current_user.hashed_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该账号已设置本地密码",
+        )
+    current_user.hashed_password = get_password_hash(payload.password)
+    await db.commit()
+    return {"message": "密码已设置"}
 
 
 @router.get("/linuxdo/login")
@@ -368,6 +898,66 @@ async def linuxdo_login(request: Request, next: Optional[str] = None):
     return resp
 
 
+@router.post("/linuxdo/bind", summary="绑定 Linux.do 账号")
+@limiter.limit(RateLimits.AUTH)
+async def linuxdo_bind(
+    payload: OAuthBindInitRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user_dep),
+):
+    """初始化 Linux.do 绑定流程"""
+    if not settings.LINUX_DO_CLIENT_ID:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="LINUX_DO_CLIENT_ID 未配置",
+        )
+    if not settings.LINUX_DO_REDIRECT_URI:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="LINUX_DO_REDIRECT_URI 未配置",
+        )
+
+    state = token_urlsafe(32)
+    params = {
+        "response_type": "code",
+        "client_id": settings.LINUX_DO_CLIENT_ID,
+        "redirect_uri": settings.LINUX_DO_REDIRECT_URI,
+        "state": state,
+        "scope": settings.LINUX_DO_SCOPE,
+    }
+    url = f"{settings.LINUX_DO_AUTHORIZE_URL}?{urlencode(params)}"
+
+    resp = JSONResponse({"authorize_url": url})
+    is_secure = not settings.DEBUG
+    resp.set_cookie(
+        "linuxdo_oauth_state",
+        state,
+        httponly=True,
+        samesite="none" if settings.DEBUG else "lax",
+        secure=is_secure,
+        max_age=600,
+    )
+    next_path = _sanitize_next_path(payload.next)
+    if next_path:
+        resp.set_cookie(
+            "linuxdo_oauth_next",
+            next_path,
+            httponly=True,
+            samesite="none" if settings.DEBUG else "lax",
+            secure=is_secure,
+            max_age=600,
+        )
+    resp.set_cookie(
+        "linuxdo_bind_user",
+        str(current_user.id),
+        httponly=True,
+        samesite="none" if settings.DEBUG else "lax",
+        secure=is_secure,
+        max_age=600,
+    )
+    return resp
+
+
 @router.get("/linuxdo/callback")
 async def linuxdo_callback(
     request: Request,
@@ -411,13 +1001,55 @@ async def linuxdo_callback(
             detail=str(e),
         )
 
-    # 创建/更新用户
-    user = await _upsert_linuxdo_user(db, userinfo)
+    bind_user_id = request.cookies.get("linuxdo_bind_user")
+    if bind_user_id:
+        try:
+            target_user_id = int(bind_user_id)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="绑定信息无效",
+            )
 
-    # 记录登录日志
-    from app.services.log_service import log_login
-    await log_login(db, user.id, request=request, success=True)
-    await db.commit()
+        target_user = await db.get(User, target_user_id)
+        if target_user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="绑定账号不存在",
+            )
+
+        linux_do_id = str(userinfo.get("id"))
+        if not linux_do_id or linux_do_id == "None":
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Linux.do 用户信息缺少 id",
+            )
+        if target_user.linux_do_id and target_user.linux_do_id != linux_do_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="已绑定其他 Linux.do 账号",
+            )
+
+        result = await db.execute(select(User).where(User.linux_do_id == linux_do_id))
+        existing_user = result.scalar_one_or_none()
+        if existing_user and existing_user.id != target_user.id:
+            await merge_users(db, target_user, existing_user)
+
+        await _apply_linuxdo_profile(target_user, userinfo)
+        await db.commit()
+        await db.refresh(target_user)
+        user = target_user
+        next_path = _sanitize_next_path(request.cookies.get("linuxdo_oauth_next")) or "/account/security"
+    else:
+        # 创建/更新用户
+        user = await _upsert_linuxdo_user(db, userinfo)
+
+        # 记录登录日志
+        from app.services.log_service import log_login
+        await log_login(db, user.id, request=request, success=True)
+        await db.commit()
+
+        next_path = _sanitize_next_path(request.cookies.get("linuxdo_oauth_next"))
 
     # 签发 JWT（包含用户名和 Linux.do ID，用于日志记录）
     jwt_token = create_access_token({
@@ -428,7 +1060,6 @@ async def linuxdo_callback(
     })
 
     # 构建重定向 URL
-    next_path = _sanitize_next_path(request.cookies.get("linuxdo_oauth_next"))
     frontend = settings.FRONTEND_URL.rstrip("/")
     redirect_to = f"{frontend}/login#token={jwt_token}"
 
@@ -454,6 +1085,7 @@ async def linuxdo_callback(
     # 清除 OAuth cookie
     resp.delete_cookie("linuxdo_oauth_state")
     resp.delete_cookie("linuxdo_oauth_next")
+    resp.delete_cookie("linuxdo_bind_user")
 
     return resp
 
@@ -513,6 +1145,60 @@ async def github_login(request: Request, next: Optional[str] = None):
     return resp
 
 
+@router.post("/github/bind", summary="绑定 GitHub 账号")
+@limiter.limit(RateLimits.AUTH)
+async def github_bind(
+    payload: OAuthBindInitRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user_dep),
+):
+    """初始化 GitHub 绑定流程"""
+    if not settings.GITHUB_CLIENT_ID:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="GITHUB_CLIENT_ID 未配置",
+        )
+
+    state = token_urlsafe(32)
+    params = {
+        "client_id": settings.GITHUB_CLIENT_ID,
+        "redirect_uri": settings.GITHUB_REDIRECT_URI,
+        "state": state,
+        "scope": settings.GITHUB_SCOPE,
+    }
+    url = f"{settings.GITHUB_AUTHORIZE_URL}?{urlencode(params)}"
+
+    resp = JSONResponse({"authorize_url": url})
+    is_secure = not settings.DEBUG
+    resp.set_cookie(
+        "github_oauth_state",
+        state,
+        httponly=True,
+        samesite="none" if settings.DEBUG else "lax",
+        secure=is_secure,
+        max_age=600,
+    )
+    next_path = _sanitize_next_path(payload.next)
+    if next_path:
+        resp.set_cookie(
+            "github_oauth_next",
+            next_path,
+            httponly=True,
+            samesite="none" if settings.DEBUG else "lax",
+            secure=is_secure,
+            max_age=600,
+        )
+    resp.set_cookie(
+        "github_bind_user",
+        str(current_user.id),
+        httponly=True,
+        samesite="none" if settings.DEBUG else "lax",
+        secure=is_secure,
+        max_age=600,
+    )
+    return resp
+
+
 @router.get("/github/callback")
 async def github_callback(
     request: Request,
@@ -559,13 +1245,55 @@ async def github_callback(
             detail=str(e),
         )
 
-    # 创建/更新用户
-    user = await _upsert_github_user(db, userinfo, primary_email)
+    bind_user_id = request.cookies.get("github_bind_user")
+    if bind_user_id:
+        try:
+            target_user_id = int(bind_user_id)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="绑定信息无效",
+            )
 
-    # 记录登录日志
-    from app.services.log_service import log_login
-    await log_login(db, user.id, request=request, success=True)
-    await db.commit()
+        target_user = await db.get(User, target_user_id)
+        if target_user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="绑定账号不存在",
+            )
+
+        github_id = str(userinfo.get("id"))
+        if not github_id or github_id == "None":
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="GitHub 用户信息缺少 id",
+            )
+        if target_user.github_id and target_user.github_id != github_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="已绑定其他 GitHub 账号",
+            )
+
+        result = await db.execute(select(User).where(User.github_id == github_id))
+        existing_user = result.scalar_one_or_none()
+        if existing_user and existing_user.id != target_user.id:
+            await merge_users(db, target_user, existing_user)
+
+        await _apply_github_profile(target_user, userinfo, primary_email)
+        await db.commit()
+        await db.refresh(target_user)
+        user = target_user
+        next_path = _sanitize_next_path(request.cookies.get("github_oauth_next")) or "/account/security"
+    else:
+        # 创建/更新用户
+        user = await _upsert_github_user(db, userinfo, primary_email)
+
+        # 记录登录日志
+        from app.services.log_service import log_login
+        await log_login(db, user.id, request=request, success=True)
+        await db.commit()
+
+        next_path = _sanitize_next_path(request.cookies.get("github_oauth_next"))
 
     # 签发 JWT（包含用户名，用于日志记录）
     jwt_token = create_access_token({
@@ -575,7 +1303,6 @@ async def github_callback(
     })
 
     # 构建重定向 URL
-    next_path = _sanitize_next_path(request.cookies.get("github_oauth_next"))
     frontend = settings.FRONTEND_URL.rstrip("/")
     redirect_to = f"{frontend}/login#token={jwt_token}"
 
@@ -601,5 +1328,6 @@ async def github_callback(
     # 清除 OAuth cookie
     resp.delete_cookie("github_oauth_state")
     resp.delete_cookie("github_oauth_next")
+    resp.delete_cookie("github_bind_user")
 
     return resp

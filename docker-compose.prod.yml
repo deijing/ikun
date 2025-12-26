@@ -68,18 +68,12 @@ services:
       dockerfile: Dockerfile.prod
     container_name: chicken_king_backend
     restart: unless-stopped
+    env_file:
+      - ./.env
     environment:
-      - DEBUG=false
-      - SECRET_KEY=${SECRET_KEY}
-      - DATABASE_URL=mysql+aiomysql://${MYSQL_USER:-chicken}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-chicken_king}
+      - DEBUG=${DEBUG:-false}
+      - DATABASE_URL=mysql+aiomysql://${MYSQL_USER:-chicken}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-chicken_king}?charset=utf8mb4
       - REDIS_URL=redis://redis:6379/0
-      - FRONTEND_URL=${FRONTEND_URL}
-      - LINUX_DO_CLIENT_ID=${LINUX_DO_CLIENT_ID}
-      - LINUX_DO_CLIENT_SECRET=${LINUX_DO_CLIENT_SECRET}
-      - LINUX_DO_REDIRECT_URI=${LINUX_DO_REDIRECT_URI}
-      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
-      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
-      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI}
     depends_on:
       db:
         condition: service_healthy
@@ -90,6 +84,41 @@ services:
     # 内部网络，不直接暴露
     expose:
       - "8000"
+    # 持久化上传媒体目录
+    volumes:
+      - media_data:/app/app/uploads
+
+  # ==========================================================================
+  # Worker 服务（部署流程）
+  # ==========================================================================
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: chicken_king_worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - ./.env
+    environment:
+      - DEBUG=${DEBUG:-false}
+      - DATABASE_URL=mysql+aiomysql://${MYSQL_USER:-chicken}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-chicken_king}?charset=utf8mb4
+      - REDIS_URL=redis://redis:6379/0
+      - WORKER_API_BASE_URL=http://backend:8000
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    user: root
+    networks:
+      - chicken_king_network
+    healthcheck:
+      disable: true
 
   # ==========================================================================
   # React 前端 (Nginx)
@@ -108,6 +137,22 @@ services:
       - "80"
 
   # ==========================================================================
+  # Traefik 项目网关
+  # ==========================================================================
+  traefik:
+    image: traefik:v2.10
+    container_name: chicken_king_traefik
+    restart: unless-stopped
+    command:
+      - --entrypoints.web.address=:8081
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - chicken_king_network
+
+  # ==========================================================================
   # Nginx 反向代理 (入口)
   # ==========================================================================
   nginx:
@@ -124,10 +169,11 @@ services:
     depends_on:
       - frontend
       - backend
+      - traefik
     networks:
       - chicken_king_network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -192,4 +238,6 @@ volumes:
   redis_data:
     driver: local
   umami_db_data:
+    driver: local
+  media_data:
     driver: local
