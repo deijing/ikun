@@ -140,6 +140,11 @@ class SubmissionCreate(BaseModel):
         None,
         description="项目文档（Markdown格式，最终提交时必填）"
     )
+    image_ref: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Docker镜像引用（格式：registry/image@sha256:xxx，禁止使用tag）"
+    )
 
     @field_validator("repo_url")
     @classmethod
@@ -165,6 +170,44 @@ class SubmissionCreate(BaseModel):
 
         return v
 
+    @field_validator("image_ref")
+    @classmethod
+    def validate_image_ref(cls, v: Optional[str]) -> Optional[str]:
+        """
+        验证 Docker 镜像引用格式
+
+        规则：
+        1. 必须使用 @sha256: digest 格式
+        2. 禁止使用 :latest 或其他 tag
+        3. digest 必须是 64 位十六进制字符
+        """
+        if v is None or v.strip() == "":
+            return None
+
+        import re
+        v = v.strip()
+
+        # 禁止 :latest
+        if ":latest" in v.lower():
+            raise ValueError("禁止使用 :latest 标签，请使用 @sha256:xxx 格式")
+
+        # 禁止使用 tag（冒号后跟非 sha256 的内容）
+        # 允许的格式：image@sha256:xxx 或 registry/image@sha256:xxx
+        if ":" in v and "@sha256:" not in v:
+            raise ValueError("禁止使用标签（tag），请使用 @sha256:xxx 格式指定镜像摘要")
+
+        # 必须包含 @sha256:
+        if "@sha256:" not in v:
+            raise ValueError("镜像引用必须使用 @sha256:xxx 格式，例如：ghcr.io/user/image@sha256:abc123...")
+
+        # 验证 sha256 digest 格式（64位十六进制）
+        sha256_pattern = r"@sha256:([a-fA-F0-9]{64})$"
+        match = re.search(sha256_pattern, v)
+        if not match:
+            raise ValueError("sha256 摘要格式不正确，必须是 64 位十六进制字符")
+
+        return v
+
 
 class SubmissionUpdate(BaseModel):
     """更新作品提交请求体（支持部分更新）"""
@@ -174,6 +217,7 @@ class SubmissionUpdate(BaseModel):
     demo_url: Optional[str] = Field(None, max_length=500)
     video_url: Optional[str] = Field(None, max_length=500)
     project_doc_md: Optional[str] = None
+    image_ref: Optional[str] = Field(None, max_length=500)
 
     @field_validator("repo_url")
     @classmethod
@@ -182,6 +226,14 @@ class SubmissionUpdate(BaseModel):
         if v is None:
             return v
         return SubmissionCreate.validate_repo_url(v)
+
+    @field_validator("image_ref")
+    @classmethod
+    def validate_image_ref(cls, v: Optional[str]) -> Optional[str]:
+        """验证镜像引用格式（仅当提供时）"""
+        if v is None:
+            return v
+        return SubmissionCreate.validate_image_ref(v)
 
 
 class UserBrief(BaseModel):
@@ -208,6 +260,7 @@ class SubmissionResponse(BaseModel):
     demo_url: Optional[str] = None
     video_url: Optional[str] = None
     project_doc_md: Optional[str] = None
+    image_ref: Optional[str] = None
     status: str
     vote_count: int = 0
     validation_summary: Optional[dict[str, Any]] = None
@@ -234,6 +287,7 @@ class SubmissionPublicResponse(BaseModel):
     repo_url: str
     demo_url: Optional[str] = None
     video_url: Optional[str] = None
+    image_ref: Optional[str] = None
     status: str
     vote_count: int = 0
     submitted_at: Optional[datetime] = None

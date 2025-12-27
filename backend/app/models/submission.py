@@ -109,6 +109,13 @@ class Submission(BaseModel):
         comment="项目文档（Markdown格式，包含安装步骤、使用说明、技术架构）"
     )
 
+    # Docker 镜像引用（必须使用 @sha256 digest）
+    image_ref = Column(
+        String(500),
+        nullable=True,
+        comment="Docker镜像引用（格式：registry/image@sha256:xxx，禁止使用tag）"
+    )
+
     # 校验相关
     validation_summary = Column(
         JSON,
