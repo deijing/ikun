@@ -507,6 +507,86 @@ async def validate_submission_materials(
 # CRUD 端点
 # ============================================================================
 
+
+@router.get(
+    "/my-history",
+    summary="获取我的提交历史记录",
+    description="获取当前用户的所有提交记录，包括提交时间、状态变更等信息。",
+)
+async def get_my_submission_history(
+    contest_id: Optional[int] = Query(None, description="比赛ID（可选）"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    获取当前用户的提交历史记录
+
+    返回用户所有作品的提交记录，包括：
+    - 作品基本信息
+    - 提交时间
+    - 当前状态
+    - 审核信息（如有）
+    """
+    # 构建查询
+    query = (
+        select(Submission)
+        .options(selectinload(Submission.attachments))
+        .where(Submission.user_id == current_user.id)
+    )
+
+    # 比赛过滤
+    if contest_id is not None:
+        query = query.where(Submission.contest_id == contest_id)
+
+    # 统计总数
+    count_query = select(func.count(Submission.id)).where(
+        Submission.user_id == current_user.id
+    )
+    if contest_id is not None:
+        count_query = count_query.where(Submission.contest_id == contest_id)
+
+    count_result = await db.execute(count_query)
+    total = count_result.scalar() or 0
+
+    # 按提交时间倒序（未提交的按创建时间）
+    query = query.order_by(
+        Submission.submitted_at.desc().nullslast(),
+        Submission.created_at.desc()
+    )
+    query = query.offset((page - 1) * page_size).limit(page_size)
+
+    result = await db.execute(query)
+    submissions = result.scalars().all()
+
+    # 构建响应
+    items = []
+    for sub in submissions:
+        items.append({
+            "id": sub.id,
+            "contest_id": sub.contest_id,
+            "title": sub.title,
+            "status": sub.status,
+            "image_ref": sub.image_ref,
+            "repo_url": sub.repo_url,
+            "created_at": sub.created_at.isoformat() if sub.created_at else None,
+            "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
+            "validated_at": sub.validated_at.isoformat() if sub.validated_at else None,
+            "reviewed_at": sub.reviewed_at.isoformat() if sub.reviewed_at else None,
+            "review_comment": sub.review_comment,
+            "vote_count": sub.vote_count,
+            "attachments_count": len(sub.attachments) if sub.attachments else 0,
+        })
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
 @router.get(
     "/",
     response_model=SubmissionListResponse,
