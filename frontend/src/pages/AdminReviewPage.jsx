@@ -17,6 +17,7 @@ import {
 import { useAuthStore } from '../stores/authStore'
 import { adminApi } from '../services'
 import { Badge } from '../components/ui/badge'
+import { resolveAvatarUrl } from '../utils/avatar'
 
 const STATUS_CONFIG = {
   submitted: {
@@ -221,7 +222,7 @@ export default function AdminReviewPage() {
                     <div className="flex items-start justify-between">
                       <div className="flex items-start gap-4">
                         <img
-                          src={reg.user?.avatar_url || `https://ui-avatars.com/api/?name=${reg.user?.username}`}
+                          src={resolveAvatarUrl(reg.user?.avatar_url)}
                           alt={reg.user?.display_name}
                           className="w-12 h-12 rounded-full"
                         />

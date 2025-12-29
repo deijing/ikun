@@ -64,10 +64,22 @@ export const PRIZE_CONFIG = {
  * 风控规则
  */
 export const RISK_RULES = [
-  { label: '消耗认定', content: '仅统计活动周期内，由参赛专用 Key 产生的真实有效调用。' },
-  { label: '返还形式', content: '费用返还以平台余额形式发放。' },
-  { label: '折扣券说明', content: '优惠券为一次性使用（建议大额充值时使用以最大化收益），有效期为发奖后30天内。' },
-  { label: '严禁作弊', content: '后台部署了严格的流量分析系统，恶意刷量、空跑脚本将直接取消参赛及返还资格。' },
+  {
+    label: '消耗认定',
+    content: '仅统计活动周期内，由参赛专用 Key 产生的真实有效调用。',
+  },
+  {
+    label: '返还形式',
+    content: '费用返还以平台余额形式发放。',
+  },
+  {
+    label: '折扣券说明',
+    content: '优惠券为一次性使用（建议大额充值时使用以最大化收益），有效期为发奖后 30 天内。',
+  },
+  {
+    label: '严禁作弊',
+    content: '后台部署了严格的流量分析系统，恶意刷量、空跑脚本将直接取消参赛及返还资格。',
+  },
 ]
 
 /**
@@ -76,20 +88,25 @@ export const RISK_RULES = [
 export const PROCESS_STEPS = [
   {
     step: 1,
-    title: '准备 (Register)',
-    description: '注册 ikuncode，创建名为',
+    title: '准备 (Prepare)',
+    description: '登录 ikuncode，准备参赛项目，并创建名为',
     highlight: 'ikun-contest',
     suffix: '的专用 API Key。',
   },
   {
     step: 2,
-    title: '开发 (Coding)',
-    description: '题材不限（插件/IDE工具/脚本）。需开源至 GitHub/Gitee 并真实调用 API。',
+    title: '报名 (Signup)',
+    description: '填写报名表单，提交项目简介、计划、技术栈与联系方式。',
   },
   {
     step: 3,
+    title: '开发 (Build)',
+    description: '持续完善项目，开源至 GitHub/Gitee，并真实调用 ikuncode API。',
+  },
+  {
+    step: 4,
     title: '提交 (Submit)',
-    description: '截止日前填写报名表单（项目地址、视频、账号信息）。',
+    description: '提交期上传作品材料与镜像部署，进入评审/投票/公示环节。',
   },
 ]
 

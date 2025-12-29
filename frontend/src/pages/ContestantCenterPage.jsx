@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
 import html2canvas from 'html2canvas'
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import api from '@/services/api'
+import { userApi } from '@/services'
 import {
   CheckCircle2,
   Clock,
@@ -45,10 +46,14 @@ import {
   Rocket,
   Cpu,
   FileDown,
+  Upload,
 } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import { RegistrationModal } from '@/components/registration'
 import ParticipantDetailModal from '@/components/participant/ParticipantDetailModal'
+import { useContestId } from '@/hooks/useContestId'
+import { resolveAvatarUrl } from '@/utils/avatar'
+import { IMAGE_ACCEPT, validateImageFile } from '@/utils/media'
 
 /**
  * 审核状态配置 - 高端版
@@ -99,6 +104,25 @@ const STATUS_CONFIG = {
     gradient: 'from-zinc-500/80 to-zinc-600/80',
     description: '报名已撤回',
   },
+}
+
+/**
+ * 作品状态展示文案
+ */
+const PROJECT_STATUS_LABELS = {
+  draft: '草稿',
+  submitted: '已提交',
+  online: '已上线',
+  offline: '已下线',
+}
+
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024
+
+function getErrorMessage(error) {
+  const detail = error?.response?.data?.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (typeof error?.message === 'string' && error.message) return error.message
+  return '操作失败，请稍后重试'
 }
 
 /**
@@ -533,6 +557,8 @@ export default function ContestantCenterPage() {
 
   const user = useAuthStore((s) => s.user)
   const token = useAuthStore((s) => s.token)
+  const setUser = useAuthStore((s) => s.setUser)
+  const { contestId } = useContestId()
   const registration = useRegistrationStore((s) => s.registration)
   const status = useRegistrationStore((s) => s.status)
   const checkStatus = useRegistrationStore((s) => s.checkStatus)
@@ -547,6 +573,9 @@ export default function ContestantCenterPage() {
   const [copied, setCopied] = useState(false)
   const [exportingPDF, setExportingPDF] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
+  const [projectInfo, setProjectInfo] = useState(null)
+  const [avatarUploading, setAvatarUploading] = useState(false)
+  const avatarInputRef = useRef(null)
 
   // 为展示页 modal 构建完整的参赛者数据
   const participantData = useMemo(() => {
@@ -590,8 +619,8 @@ export default function ContestantCenterPage() {
       navigate('/login')
       return
     }
-    checkStatus(1).finally(() => setLoading(false))
-  }, [hydrated, token, checkStatus, navigate])
+    checkStatus(contestId).finally(() => setLoading(false))
+  }, [hydrated, token, contestId, checkStatus, navigate])
 
   useEffect(() => {
     if (!registration?.id) return
@@ -626,6 +655,26 @@ export default function ContestantCenterPage() {
     }
     loadData()
   }, [registration?.id, registration?.repo_url])
+
+  useEffect(() => {
+    if (!token || !registration?.id) return
+    let active = true
+
+    const loadProject = async () => {
+      try {
+        const res = await api.get('/projects', { params: { contest_id: contestId, mine: true } })
+        const project = res?.items?.[0] || null
+        if (active) setProjectInfo(project)
+      } catch {
+        if (active) setProjectInfo(null)
+      }
+    }
+
+    loadProject()
+    return () => {
+      active = false
+    }
+  }, [token, contestId, registration?.id])
 
   const handleRefresh = async () => {
     if (!registration?.id) return
@@ -665,6 +714,32 @@ export default function ContestantCenterPage() {
       toast.success('数据已刷新')
     } catch { toast.error('刷新失败') }
     finally { setRefreshing(false) }
+  }
+
+  const handleAvatarPick = () => {
+    if (!avatarInputRef.current) return
+    avatarInputRef.current.click()
+  }
+
+  const handleAvatarChange = async (event) => {
+    const file = event.target.files?.[0] || null
+    event.target.value = ''
+    if (!file) return
+    const error = validateImageFile(file, AVATAR_MAX_BYTES)
+    if (error) {
+      toast.error(error)
+      return
+    }
+    setAvatarUploading(true)
+    try {
+      const updated = await userApi.uploadAvatar(file)
+      setUser(updated)
+      toast.success('头像已更新')
+    } catch (err) {
+      toast.error(getErrorMessage(err))
+    } finally {
+      setAvatarUploading(false)
+    }
   }
 
   const handleCopyApiKey = () => {
@@ -854,6 +929,7 @@ export default function ContestantCenterPage() {
   }
 
   const planProgress = useMemo(() => parsePlanProgress(registration?.plan), [registration?.plan])
+  const projectStatusLabel = projectInfo?.status ? (PROJECT_STATUS_LABELS[projectInfo.status] || '未知') : '-'
   const statusConfig = STATUS_CONFIG[status] || STATUS_CONFIG.submitted
   const StatusIcon = statusConfig.icon
 
@@ -907,7 +983,7 @@ export default function ContestantCenterPage() {
                 <div className="relative">
                   <div className="absolute inset-0 bg-white/30 rounded-full blur-md animate-pulse" />
                   <img
-                    src={user?.avatar_url || `https://ui-avatars.com/api/?name=${user?.username}&background=random`}
+                    src={resolveAvatarUrl(user?.avatar_url)}
                     alt={user?.display_name}
                     className="relative w-24 h-24 rounded-full border-4 border-white/20 shadow-xl object-cover"
                   />
@@ -932,6 +1008,21 @@ export default function ContestantCenterPage() {
               </div>
 
               <div className="flex gap-3">
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept={IMAGE_ACCEPT}
+                  className="hidden"
+                  onChange={handleAvatarChange}
+                />
+                <Button
+                  onClick={handleAvatarPick}
+                  disabled={avatarUploading}
+                  className="bg-white/10 hover:bg-white/20 text-white border-white/10 backdrop-blur-md shadow-lg"
+                >
+                  <Upload className="w-4 h-4 mr-2" />
+                  {avatarUploading ? '上传中...' : '更换头像'}
+                </Button>
                 <Button
                   onClick={handleRefresh}
                   disabled={refreshing}
@@ -1274,6 +1365,23 @@ export default function ContestantCenterPage() {
                     <span className="text-sm">提交作品</span>
                   </Button>
                 </Link>
+                {projectInfo?.id ? (
+                  <Link to={`/projects/${projectInfo.id}/access`} className="block">
+                    <Button variant="ghost" className="w-full justify-start h-11 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800">
+                      <Eye className="w-4 h-4 mr-3 text-blue-500" />
+                      <span className="text-sm">访问作品</span>
+                    </Button>
+                  </Link>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-11 rounded-xl text-zinc-400"
+                    disabled
+                  >
+                    <Eye className="w-4 h-4 mr-3 text-zinc-400" />
+                    <span className="text-sm">访问作品</span>
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -1290,6 +1398,10 @@ export default function ContestantCenterPage() {
                   <Badge variant={status === 'approved' ? 'success' : status === 'submitted' ? 'warning' : 'secondary'}>
                     {statusConfig.label}
                   </Badge>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-zinc-500">作品状态</span>
+                  <span className="text-zinc-600 dark:text-zinc-400">{projectStatusLabel}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-zinc-500">报名时间</span>
@@ -1375,7 +1487,7 @@ export default function ContestantCenterPage() {
                     >
                       <div className="flex items-start gap-2.5">
                         <img
-                          src={msg.user?.avatar_url || `https://ui-avatars.com/api/?name=${msg.user?.username || 'U'}&background=random&size=32`}
+                    src={resolveAvatarUrl(msg.user?.avatar_url)}
                           alt=""
                           className="w-7 h-7 rounded-full flex-shrink-0"
                         />

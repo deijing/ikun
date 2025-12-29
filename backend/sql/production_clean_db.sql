@@ -1,4 +1,4 @@
--- MySQL dump 10.13  Distrib 8.0.43, for macos13.7 (arm64)
+﻿-- MySQL dump 10.13  Distrib 8.0.43, for macos13.7 (arm64)
 --
 -- Host: localhost    Database: chicken_king
 -- ------------------------------------------------------
@@ -300,6 +300,14 @@ CREATE TABLE `contests` (
   `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   `title` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '比赛标题',
   `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '比赛描述',
+  `visibility` enum('draft','published','hidden') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'published' COMMENT 'Contest visibility',
+  `home_visible` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否首页展示',
+  `banner_url` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Contest banner url',
+  `rules_md` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Contest rules markdown',
+  `prizes_md` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Contest prizes markdown',
+  `review_rules_md` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Contest review rules markdown',
+  `faq_md` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Contest faq markdown',
+  `template_config` json DEFAULT NULL COMMENT '首页模板配置（JSON）',
   `phase` enum('upcoming','signup','submission','voting','ended') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'upcoming' COMMENT '比赛阶段',
   `signup_start` datetime DEFAULT NULL COMMENT '报名开始时间',
   `signup_end` datetime DEFAULT NULL COMMENT '报名结束时间',
@@ -307,6 +315,7 @@ CREATE TABLE `contests` (
   `submit_end` datetime DEFAULT NULL COMMENT '提交结束时间',
   `vote_start` datetime DEFAULT NULL COMMENT '投票开始时间',
   `vote_end` datetime DEFAULT NULL COMMENT '投票结束时间',
+  `auto_phase_enabled` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'Auto phase sync',
   PRIMARY KEY (`id`),
   KEY `ix_contests_phase` (`phase`)
 ) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='比赛表';
@@ -908,6 +917,7 @@ CREATE TABLE `points_ledger` (
   UNIQUE KEY `idx_request_id` (`request_id`),
   KEY `idx_user_id` (`user_id`),
   KEY `idx_created_at` (`created_at`),
+  KEY `idx_user_created_at` (`user_id`, `created_at`),
   KEY `idx_ref` (`ref_type`,`ref_id`),
   CONSTRAINT `points_ledger_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=1296 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='积分流水表';
@@ -944,6 +954,7 @@ CREATE TABLE `prediction_bets` (
   UNIQUE KEY `idx_request_id` (`request_id`),
   KEY `idx_market_id` (`market_id`),
   KEY `idx_user_id` (`user_id`),
+  KEY `idx_user_market` (`user_id`, `market_id`),
   KEY `idx_option_id` (`option_id`),
   CONSTRAINT `prediction_bets_ibfk_1` FOREIGN KEY (`market_id`) REFERENCES `prediction_markets` (`id`) ON DELETE CASCADE,
   CONSTRAINT `prediction_bets_ibfk_2` FOREIGN KEY (`option_id`) REFERENCES `prediction_options` (`id`) ON DELETE CASCADE,
@@ -1527,6 +1538,7 @@ CREATE TABLE `submissions` (
   KEY `ix_submissions_contest` (`contest_id`),
   KEY `ix_submissions_status` (`status`),
   KEY `ix_submissions_vote_count` (`vote_count` DESC),
+  KEY `ix_submissions_contest_status_vote` (`contest_id`, `status`, `vote_count` DESC),
   KEY `ix_submissions_registration` (`registration_id`),
   KEY `ix_submissions_reviewer` (`reviewer_id`),
   KEY `idx_final_score` (`final_score` DESC),
@@ -2052,6 +2064,223 @@ CREATE TABLE `votes` (
 LOCK TABLES `votes` WRITE;
 /*!40000 ALTER TABLE `votes` DISABLE KEYS */;
 /*!40000 ALTER TABLE `votes` ENABLE KEYS */;
+UNLOCK TABLES;
+ 
+--
+-- Table structure for table `projects`
+--
+
+DROP TABLE IF EXISTS `projects`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `projects` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  `contest_id` int NOT NULL COMMENT '关联比赛ID',
+  `user_id` int NOT NULL COMMENT '创建者ID',
+  `title` varchar(200) NOT NULL COMMENT '作品名称',
+  `summary` varchar(500) DEFAULT NULL COMMENT '作品简介',
+  `description` text COMMENT '作品详情',
+  `repo_url` varchar(500) DEFAULT NULL COMMENT '开源仓库地址',
+  `cover_image_url` varchar(500) DEFAULT NULL COMMENT '封面图',
+  `screenshot_urls` json DEFAULT NULL COMMENT '截图列表',
+  `readme_url` varchar(500) DEFAULT NULL COMMENT 'README 链接',
+  `demo_url` varchar(500) DEFAULT NULL COMMENT '演示地址',
+  `status` enum('draft','submitted','online','offline') NOT NULL DEFAULT 'draft' COMMENT '作品状态',
+  `current_submission_id` int DEFAULT NULL COMMENT '当前线上 submission_id',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_projects_contest_user` (`contest_id`,`user_id`),
+  KEY `ix_projects_contest` (`contest_id`),
+  KEY `ix_projects_user` (`user_id`),
+  KEY `ix_projects_status` (`status`),
+  CONSTRAINT `fk_projects_contest_id` FOREIGN KEY (`contest_id`) REFERENCES `contests` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_projects_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品表';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `projects`
+--
+
+LOCK TABLES `projects` WRITE;
+/*!40000 ALTER TABLE `projects` DISABLE KEYS */;
+/*!40000 ALTER TABLE `projects` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `project_submissions`
+--
+
+DROP TABLE IF EXISTS `project_submissions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `project_submissions` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  `project_id` int NOT NULL COMMENT '关联作品ID',
+  `contest_id` int NOT NULL COMMENT '关联比赛ID',
+  `user_id` int NOT NULL COMMENT '提交者ID',
+  `image_ref` varchar(500) NOT NULL COMMENT '镜像引用（含 digest）',
+  `image_registry` varchar(100) DEFAULT NULL COMMENT '镜像仓库域名',
+  `image_repo` varchar(300) DEFAULT NULL COMMENT '镜像仓库路径',
+  `image_digest` varchar(128) DEFAULT NULL COMMENT '镜像 digest',
+  `status` enum('created','queued','pulling','deploying','healthchecking','online','failed','stopped') NOT NULL DEFAULT 'created' COMMENT '提交状态',
+  `status_message` varchar(500) DEFAULT NULL COMMENT '状态说明',
+  `error_code` varchar(100) DEFAULT NULL COMMENT '错误码',
+  `log` longtext COMMENT '部署日志',
+  `domain` varchar(255) DEFAULT NULL COMMENT '访问域名',
+  `status_history` json DEFAULT NULL COMMENT '状态历史',
+  `submitted_at` datetime(6) DEFAULT NULL COMMENT '提交时间',
+  `online_at` datetime(6) DEFAULT NULL COMMENT '上线时间',
+  `failed_at` datetime(6) DEFAULT NULL COMMENT '失败时间',
+  PRIMARY KEY (`id`),
+  KEY `ix_project_submissions_project` (`project_id`),
+  KEY `ix_project_submissions_contest` (`contest_id`),
+  KEY `ix_project_submissions_user` (`user_id`),
+  KEY `ix_project_submissions_status` (`status`),
+  KEY `ix_project_submissions_contest_status` (`contest_id`, `status`),
+  KEY `ix_project_submissions_submitted` (`submitted_at`),
+  CONSTRAINT `fk_project_submissions_project_id` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_submissions_contest_id` FOREIGN KEY (`contest_id`) REFERENCES `contests` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_submissions_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品部署提交表';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `project_submissions`
+--
+
+LOCK TABLES `project_submissions` WRITE;
+/*!40000 ALTER TABLE `project_submissions` DISABLE KEYS */;
+/*!40000 ALTER TABLE `project_submissions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `project_review_assignments`
+--
+
+DROP TABLE IF EXISTS `project_review_assignments`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `project_review_assignments` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  `project_id` int NOT NULL COMMENT '关联作品ID',
+  `reviewer_id` int NOT NULL COMMENT '评审员用户ID',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_project_review_assignment` (`project_id`,`reviewer_id`),
+  KEY `ix_project_review_assignments_project` (`project_id`),
+  KEY `ix_project_review_assignments_reviewer` (`reviewer_id`),
+  CONSTRAINT `fk_project_review_assignments_project_id` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_review_assignments_reviewer_id` FOREIGN KEY (`reviewer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品评审分配表';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `project_review_assignments`
+--
+
+LOCK TABLES `project_review_assignments` WRITE;
+/*!40000 ALTER TABLE `project_review_assignments` DISABLE KEYS */;
+/*!40000 ALTER TABLE `project_review_assignments` ENABLE KEYS */;
+UNLOCK TABLES;
+ 
+--
+-- Table structure for table `project_reviews`
+--
+
+DROP TABLE IF EXISTS `project_reviews`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `project_reviews` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  `project_id` int NOT NULL COMMENT '关联作品ID',
+  `reviewer_id` int NOT NULL COMMENT '评审员用户ID',
+  `score` smallint NOT NULL COMMENT '评分(1-100)',
+  `comment` varchar(2000) DEFAULT NULL COMMENT '评审意见(可选)',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_project_reviewer` (`project_id`,`reviewer_id`),
+  KEY `ix_project_reviews_project` (`project_id`),
+  KEY `ix_project_reviews_reviewer` (`reviewer_id`),
+  CONSTRAINT `fk_project_reviews_project_id` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_reviews_reviewer_id` FOREIGN KEY (`reviewer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品评审评分表';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `project_reviews`
+--
+
+LOCK TABLES `project_reviews` WRITE;
+/*!40000 ALTER TABLE `project_reviews` DISABLE KEYS */;
+/*!40000 ALTER TABLE `project_reviews` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `project_likes`
+--
+
+DROP TABLE IF EXISTS `project_likes`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `project_likes` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  `project_id` int NOT NULL COMMENT '关联作品ID',
+  `user_id` int NOT NULL COMMENT '点赞用户ID',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_project_like` (`project_id`,`user_id`),
+  KEY `ix_project_likes_project` (`project_id`),
+  KEY `ix_project_likes_user` (`user_id`),
+  CONSTRAINT `fk_project_likes_project_id` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_likes_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品点赞表';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `project_likes`
+--
+
+LOCK TABLES `project_likes` WRITE;
+/*!40000 ALTER TABLE `project_likes` DISABLE KEYS */;
+/*!40000 ALTER TABLE `project_likes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `project_favorites`
+--
+
+DROP TABLE IF EXISTS `project_favorites`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `project_favorites` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  `project_id` int NOT NULL COMMENT '关联作品ID',
+  `user_id` int NOT NULL COMMENT '收藏用户ID',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_project_favorite` (`project_id`,`user_id`),
+  KEY `ix_project_favorites_project` (`project_id`),
+  KEY `ix_project_favorites_user` (`user_id`),
+  CONSTRAINT `fk_project_favorites_project_id` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_favorites_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='作品收藏表';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `project_favorites`
+--
+
+LOCK TABLES `project_favorites` WRITE;
+/*!40000 ALTER TABLE `project_favorites` DISABLE KEYS */;
+/*!40000 ALTER TABLE `project_favorites` ENABLE KEYS */;
 UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 

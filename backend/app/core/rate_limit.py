@@ -6,11 +6,47 @@ API 速率限制配置
 - DoS 攻击
 - 恶意脚本滥用
 """
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+import ipaddress
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
+from app.core.config import settings
+
+
+def _extract_ip(value: str) -> str | None:
+    parts = [item.strip() for item in value.split(",") if item.strip()]
+    if not parts:
+        return None
+    candidate = parts[0]
+    try:
+        ipaddress.ip_address(candidate)
+        return candidate
+    except ValueError:
+        return None
+
+
+def get_client_ip(request: Request) -> str:
+    """
+    获取客户端 IP。
+
+    TODO: 接入 CDN/WAF 后启用可信代理解析，否则容易被伪造。
+    """
+    if settings.TRUSTED_PROXY_ENABLED:
+        headers = settings.TRUSTED_PROXY_HEADERS
+        if isinstance(headers, str):
+            headers = [item.strip() for item in headers.split(",") if item.strip()]
+        for header in headers:
+            value = request.headers.get(header)
+            if not value:
+                continue
+            ip_value = _extract_ip(value)
+            if ip_value:
+                return ip_value
+    return get_remote_address(request)
 
 
 def get_user_identifier(request: Request) -> str:
@@ -31,14 +67,15 @@ def get_user_identifier(request: Request) -> str:
             pass
 
     # 回退到 IP 地址
-    return get_remote_address(request)
+    return get_client_ip(request)
 
 
 # 创建限制器实例
+storage_uri = settings.RATE_LIMIT_STORAGE_URI or settings.REDIS_URL or "memory://"
 limiter = Limiter(
     key_func=get_user_identifier,
     default_limits=["200/minute"],  # 默认限制
-    storage_uri="memory://",  # 使用内存存储（生产环境建议使用 Redis）
+    storage_uri=storage_uri,
 )
 
 
@@ -83,3 +120,9 @@ class RateLimits:
 
     # 管理员操作 - 每分钟最多 60 次
     ADMIN = "60/minute"
+
+    # 点赞/收藏 - 每分钟最多 30 次
+    INTERACTION = "30/minute"
+
+    # 投票 - 每分钟最多 30 次
+    VOTE = "30/minute"

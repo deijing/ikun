@@ -15,6 +15,7 @@ import {
   Github,
 } from 'lucide-react'
 import api from '../../services/api'
+import { resolveAvatarUrl } from '../../utils/avatar'
 
 // 提取技术栈标签
 const getTechTags = (techStack) => {
@@ -142,7 +143,7 @@ function ProjectCard({ project, rank, isActive }) {
                 <div className={`absolute -inset-1 rounded-full bg-gradient-to-br ${theme.textGradient} opacity-80 blur-sm`} />
                 <div className="relative w-24 h-24 md:w-32 md:h-32 rounded-full p-1 bg-black">
                   <img
-                    src={project.user?.avatar_url || `https://ui-avatars.com/api/?name=${project.user?.username}&background=random`}
+                    src={resolveAvatarUrl(project.user?.avatar_url)}
                     alt={project.user?.username}
                     className="w-full h-full rounded-full object-cover border-2 border-white/10"
                   />
@@ -257,19 +258,21 @@ function ProjectCard({ project, rank, isActive }) {
   )
 }
 
-export default function HotProjectsCarousel() {
+export default function HotProjectsCarousel({ contestId }) {
   const [projects, setProjects] = useState([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [isPaused, setIsPaused] = useState(false)
 
   useEffect(() => {
+    if (!contestId) return
     const loadProjects = async () => {
       try {
-        const response = await api.get('/contests/1/cheer-leaderboard', { params: { limit: 5 } })
+        setLoading(true)
+        const response = await api.get(`/contests/${contestId}/cheer-leaderboard`, { params: { limit: 5 } })
         const items = response.items || []
         if (items.length > 0) {
-          const regResponse = await api.get('/contests/1/registrations/public')
+          const regResponse = await api.get(`/contests/${contestId}/registrations/public`)
           const regMap = {}
           ;(regResponse.items || []).forEach(reg => { regMap[reg.id] = reg })
           
@@ -286,7 +289,7 @@ export default function HotProjectsCarousel() {
       }
     }
     loadProjects()
-  }, [])
+  }, [contestId])
 
   useEffect(() => {
     if (projects.length <= 1 || isPaused) return

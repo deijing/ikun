@@ -44,6 +44,7 @@ import api from '../services/api'
 import { useAuthStore } from '../stores/authStore'
 import { useToast } from '../components/Toast'
 import { adminApi2 } from '../services'
+import { resolveAvatarUrl } from '../utils/avatar'
 
 // Tab 组件
 function Tab({ active, onClick, children, icon: Icon }) {
@@ -1985,7 +1986,7 @@ function UserPointsPanel() {
                     className="w-4 h-4 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
                   />
                   <img
-                    src={user.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.username}`}
+                    src={resolveAvatarUrl(user?.avatar_url)}
                     alt={user.username}
                     className="w-10 h-10 rounded-full"
                   />
@@ -2146,7 +2147,7 @@ function UserPointsPanel() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
                 <img
-                  src={logUser.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${logUser.username}`}
+                  src={resolveAvatarUrl(logUser?.avatar_url)}
                   alt={logUser.username}
                   className="w-10 h-10 rounded-full"
                 />
@@ -2790,7 +2791,7 @@ function SlotMachineManagePanel() {
       <div className="text-center py-12">
         <Dice1 className="w-16 h-16 text-slate-300 mx-auto mb-4" />
         <p className="text-slate-500 dark:text-slate-400 mb-4">老虎机配置不存在</p>
-        <p className="text-sm text-slate-400">请先执行数据库迁移脚本 019_slot_machine_config.sql</p>
+        <p className="text-sm text-slate-400">请先执行数据库迁移脚本 039_slot_machine_config.sql</p>
       </div>
     )
   }

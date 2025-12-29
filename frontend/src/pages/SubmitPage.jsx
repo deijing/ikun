@@ -1,9 +1,9 @@
 /**
  * 提交作品页
  *
- * 支持5种必填材料：
+ * 支持5种材料（演示视频可选）：
  * 1. 项目源码 - GitHub/Gitee URL
- * 2. 演示视频 - MP4/AVI, 3-5分钟
+ * 2. 演示视频（可选） - MP4/AVI, 3-5分钟
  * 3. 项目文档 - Markdown格式
  * 4. API调用证明 - 截图 + 日志文件
  * 5. 参赛报名表 - 关联已有报名记录
@@ -25,14 +25,14 @@ import {
   Upload,
   Video,
 } from 'lucide-react'
-import { submissionApi } from '@/services'
+import { projectApi, submissionApi } from '@/services'
 import { useAuthStore } from '@/stores/authStore'
 import { useRegistrationStore } from '@/stores/registrationStore'
 import { useToast } from '@/components/Toast'
 import { RegistrationModal } from '@/components/registration'
 import { cn } from '@/lib/utils'
-
-const CONTEST_ID = 1
+import { useContestId } from '@/hooks/useContestId'
+import { IMAGE_ACCEPT, validateImageFile } from '@/utils/media'
 
 const ATTACHMENT_TYPES = {
   DEMO_VIDEO: 'demo_video',
@@ -50,6 +50,16 @@ const ACCEPTS = {
   [ATTACHMENT_TYPES.DEMO_VIDEO]: 'video/mp4,video/x-msvideo,video/avi,video/quicktime,.mp4,.avi',
   [ATTACHMENT_TYPES.API_SCREENSHOT]: 'image/png,image/jpeg,image/jpg,image/webp,.png,.jpg,.jpeg,.webp',
   [ATTACHMENT_TYPES.API_LOG]: 'text/plain,application/json,application/zip,application/x-zip-compressed,application/gzip,.txt,.log,.json,.zip,.gz',
+}
+
+const PROJECT_COVER_MAX_BYTES = 5 * 1024 * 1024
+const PROJECT_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024
+
+const PROJECT_STATUS_LABELS = {
+  draft: '草稿',
+  submitted: '已提交',
+  online: '已上线',
+  offline: '已下线',
 }
 
 /** 格式化字节大小 */
@@ -105,6 +115,31 @@ function validateRepoUrl(url) {
   const parts = v.replace(/\/+$/, '').split('/')
   if (parts.length < 5) return { ok: false, message: '仓库 URL 格式应为 https://github.com/用户名/仓库名' }
   return { ok: true, message: '' }
+}
+
+/** 构建作品访问链接 */
+function buildAccessUrl(domain) {
+  if (!domain) return ''
+  if (domain.startsWith('http://') || domain.startsWith('https://')) return domain
+  return `//${domain}`
+}
+
+/** 验证镜像引用 */
+function validateImageRef(value) {
+  const v = String(value || '').trim()
+  if (!v) return { ok: false, message: '请输入镜像引用' }
+  if (!v.includes('@sha256:')) return { ok: false, message: '镜像必须包含 @sha256 digest' }
+  const [ref, digest] = v.split('@', 2)
+  if (!ref || !digest) return { ok: false, message: '镜像引用格式不正确' }
+  const registry = ref.split('/')[0]
+  if (!registry) return { ok: false, message: '镜像引用格式不正确' }
+  if (!['ghcr.io', 'docker.io'].includes(registry)) {
+    return { ok: false, message: '仅支持 ghcr.io 或 docker.io' }
+  }
+  if (!digest.startsWith('sha256:') || digest.length !== 71) {
+    return { ok: false, message: '镜像 digest 格式不正确' }
+  }
+  return { ok: true, message: '', value: v }
 }
 
 /** 获取指定类型的第一个附件 */
@@ -209,6 +244,26 @@ function StatusBadge({ status }) {
     rejected: { label: '被拒绝', className: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300' },
   }
   const item = map[status] || map.draft
+  return (
+    <span className={cn('inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold', item.className)}>
+      {item.label}
+    </span>
+  )
+}
+
+/** 部署状态徽章 */
+function DeployStatusBadge({ status }) {
+  const map = {
+    created: { label: '已创建', className: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300' },
+    queued: { label: '排队中', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300' },
+    pulling: { label: '拉取镜像', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300' },
+    deploying: { label: '部署中', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300' },
+    healthchecking: { label: '健康检查', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300' },
+    online: { label: '已上线', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300' },
+    failed: { label: '失败', className: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300' },
+    stopped: { label: '已停止', className: 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300' },
+  }
+  const item = map[status] || { label: '未知', className: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300' }
   return (
     <span className={cn('inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold', item.className)}>
       {item.label}
@@ -435,6 +490,7 @@ export default function SubmitPage() {
   const queryClient = useQueryClient()
 
   const token = useAuthStore((s) => s.token)
+  const { contestId } = useContestId()
 
   const registration = useRegistrationStore((s) => s.registration)
   const registrationStatus = useRegistrationStore((s) => s.status)
@@ -446,6 +502,7 @@ export default function SubmitPage() {
   const [finalizeOpen, setFinalizeOpen] = useState(false)
   const [finalizeSubmissionId, setFinalizeSubmissionId] = useState(null)
   const [validateResult, setValidateResult] = useState(null)
+  const [imageRef, setImageRef] = useState('')
 
   const [uploadState, setUploadState] = useState(() => ({
     [ATTACHMENT_TYPES.DEMO_VIDEO]: { uploading: false, progress: 0 },
@@ -458,24 +515,41 @@ export default function SubmitPage() {
     description: '',
     repo_url: '',
     demo_url: '',
+    readme_url: '',
     project_doc_md: '',
   })
 
   const initForSubmissionIdRef = useRef(null)
+  const initProjectMetaRef = useRef(false)
   const createDraftPromiseRef = useRef(null)
+  const initImageRefDone = useRef(false)
+  const coverInputRef = useRef(null)
+  const screenshotInputRef = useRef(null)
 
   // 检查报名状态
   useEffect(() => {
     if (!token) return
-    checkRegistrationStatus(CONTEST_ID).catch(() => {})
-  }, [token, checkRegistrationStatus])
+    checkRegistrationStatus(contestId).catch(() => {})
+  }, [token, contestId, checkRegistrationStatus])
 
   // 获取我的提交
   const mineQuery = useQuery({
-    queryKey: ['submission', 'mine', CONTEST_ID],
+    queryKey: ['submission', 'mine', contestId],
     enabled: !!token,
     queryFn: async () => {
-      const res = await submissionApi.getMine(CONTEST_ID)
+      const res = await submissionApi.getMine(contestId)
+      return res?.items?.[0] || null
+    },
+    staleTime: 1000 * 15,
+    refetchOnWindowFocus: false,
+  })
+
+  // 获取我的作品
+  const projectQuery = useQuery({
+    queryKey: ['project', 'mine', contestId],
+    enabled: !!token,
+    queryFn: async () => {
+      const res = await projectApi.list({ contest_id: contestId, mine: true })
       return res?.items?.[0] || null
     },
     staleTime: 1000 * 15,
@@ -483,7 +557,32 @@ export default function SubmitPage() {
   })
 
   const submission = mineQuery.data
+  const project = projectQuery.data
   const isEditable = !submission || isEditableStatus(submission.status)
+
+  const projectSubmissionsQuery = useQuery({
+    queryKey: ['project', 'submissions', project?.id],
+    enabled: !!token && !!project?.id,
+    queryFn: async () => {
+      const res = await projectApi.listSubmissions(project.id)
+      return res?.items || []
+    },
+    staleTime: 1000 * 10,
+    refetchOnWindowFocus: false,
+  })
+
+  const projectAccessQuery = useQuery({
+    queryKey: ['project', 'access', project?.id],
+    enabled: !!token && !!project?.id,
+    queryFn: async () => projectApi.getAccess(project.id),
+    staleTime: 1000 * 10,
+    refetchOnWindowFocus: false,
+  })
+
+  const latestProjectSubmission = projectSubmissionsQuery.data?.[0] || null
+  const projectError = projectQuery.error ? getErrorMessage(projectQuery.error) : ''
+  const projectSubmissionError = projectSubmissionsQuery.error ? getErrorMessage(projectSubmissionsQuery.error) : ''
+  const projectAccessError = projectAccessQuery.error ? getErrorMessage(projectAccessQuery.error) : ''
 
   // 初始化表单数据
   useEffect(() => {
@@ -494,28 +593,56 @@ export default function SubmitPage() {
     }
     if (initForSubmissionIdRef.current === id) return
     initForSubmissionIdRef.current = id
-    setForm({
+    setForm((prev) => ({
+      ...prev,
       title: submission?.title || '',
       description: submission?.description || '',
       repo_url: submission?.repo_url || '',
       demo_url: submission?.demo_url || '',
       project_doc_md: submission?.project_doc_md || '',
-    })
+    }))
     setValidateResult(submission?.validation_summary || null)
   }, [submission?.id])
+
+  useEffect(() => {
+    if (!project?.id) {
+      initImageRefDone.current = false
+      setImageRef('')
+      initProjectMetaRef.current = false
+      return
+    }
+    if (initImageRefDone.current) return
+    if (latestProjectSubmission?.image_ref) {
+      setImageRef(latestProjectSubmission.image_ref)
+      initImageRefDone.current = true
+    }
+  }, [project?.id, latestProjectSubmission?.id])
+
+  useEffect(() => {
+    if (!project?.id) {
+      initProjectMetaRef.current = false
+      return
+    }
+    if (initProjectMetaRef.current) return
+    setForm((prev) => ({
+      ...prev,
+      readme_url: project?.readme_url || '',
+    }))
+    initProjectMetaRef.current = true
+  }, [project?.id])
 
   // Mutations
   const createDraftMutation = useMutation({
     mutationFn: (payload) => submissionApi.create(payload),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', CONTEST_ID] })
+      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', contestId] })
     },
   })
 
   const updateDraftMutation = useMutation({
     mutationFn: ({ id, payload }) => submissionApi.update(id, payload),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', CONTEST_ID] })
+      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', contestId] })
     },
   })
 
@@ -526,16 +653,177 @@ export default function SubmitPage() {
   const finalizeMutation = useMutation({
     mutationFn: (id) => submissionApi.finalize(id),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', CONTEST_ID] })
+      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', contestId] })
+    },
+  })
+
+  const syncProjectMutation = useMutation({
+    mutationFn: async () => {
+      const title = String(form.title || '').trim()
+      if (title.length < 2) {
+        throw new Error('作品标题至少 2 个字符')
+      }
+      const repoCheck = form.repo_url ? validateRepoUrl(form.repo_url) : { ok: true, message: '' }
+      if (!repoCheck.ok) {
+        throw new Error(repoCheck.message)
+      }
+      const payload = {
+        contest_id: contestId,
+        title,
+        summary: String(form.description || '').trim() || null,
+        description: null,
+        repo_url: form.repo_url?.trim() || null,
+        demo_url: form.demo_url?.trim() || null,
+        readme_url: form.readme_url?.trim() || null,
+      }
+      if (!project?.id) return projectApi.create(payload)
+      const { contest_id, ...updatePayload } = payload
+      return projectApi.update(project.id, updatePayload)
+    },
+    onSuccess: async () => {
+      toast.success(project?.id ? '作品信息已更新' : '作品已创建')
+      await queryClient.invalidateQueries({ queryKey: ['project', 'mine', contestId] })
+    },
+    onError: (e) => {
+      toast.error(getErrorMessage(e))
+    },
+  })
+
+  const uploadCoverMutation = useMutation({
+    mutationFn: async (file) => {
+      if (!project?.id) throw new Error('请先保存作品信息')
+      return projectApi.uploadCover(project.id, file)
+    },
+    onSuccess: async () => {
+      toast.success('封面已上传')
+      await queryClient.invalidateQueries({ queryKey: ['project', 'mine', contestId] })
+    },
+    onError: (e) => {
+      toast.error(getErrorMessage(e))
+    },
+  })
+
+  const deleteCoverMutation = useMutation({
+    mutationFn: async () => {
+      if (!project?.id) throw new Error('请先保存作品信息')
+      return projectApi.deleteCover(project.id)
+    },
+    onSuccess: async () => {
+      toast.success('封面已删除')
+      await queryClient.invalidateQueries({ queryKey: ['project', 'mine', contestId] })
+    },
+    onError: (e) => {
+      toast.error(getErrorMessage(e))
+    },
+  })
+
+  const uploadScreenshotMutation = useMutation({
+    mutationFn: async (files) => {
+      if (!project?.id) throw new Error('请先保存作品信息')
+      for (const file of files) {
+        await projectApi.uploadScreenshot(project.id, file)
+      }
+      return true
+    },
+    onSuccess: async () => {
+      toast.success('截图已上传')
+      await queryClient.invalidateQueries({ queryKey: ['project', 'mine', contestId] })
+    },
+    onError: (e) => {
+      toast.error(getErrorMessage(e))
+    },
+  })
+
+  const deleteScreenshotMutation = useMutation({
+    mutationFn: async (url) => {
+      if (!project?.id) throw new Error('请先保存作品信息')
+      return projectApi.deleteScreenshot(project.id, url)
+    },
+    onSuccess: async () => {
+      toast.success('截图已删除')
+      await queryClient.invalidateQueries({ queryKey: ['project', 'mine', contestId] })
+    },
+    onError: (e) => {
+      toast.error(getErrorMessage(e))
+    },
+  })
+
+  const submitImageMutation = useMutation({
+    mutationFn: async () => {
+      if (!project?.id) throw new Error('请先创建作品信息')
+      const check = validateImageRef(imageRef)
+      if (!check.ok) throw new Error(check.message)
+      return projectApi.submitImage(project.id, { image_ref: check.value })
+    },
+    onSuccess: async () => {
+      toast.success('镜像已提交，正在部署')
+      await queryClient.invalidateQueries({ queryKey: ['project', 'submissions', project?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['project', 'access', project?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['project', 'mine', contestId] })
+    },
+    onError: (e) => {
+      toast.error(getErrorMessage(e))
     },
   })
 
   const deleteAttachmentMutation = useMutation({
     mutationFn: ({ submissionId, attachmentId }) => submissionApi.deleteAttachment(submissionId, attachmentId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', CONTEST_ID] })
+      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', contestId] })
     },
   })
+
+  const handleCoverPick = () => {
+    if (!project?.id) {
+      toast.error('请先保存作品信息')
+      return
+    }
+    if (uploadCoverMutation.isPending || deleteCoverMutation.isPending) return
+    coverInputRef.current?.click()
+  }
+
+  const handleCoverChange = (event) => {
+    const file = event.target.files?.[0] || null
+    event.target.value = ''
+    if (!file) return
+    const error = validateImageFile(file, PROJECT_COVER_MAX_BYTES)
+    if (error) {
+      toast.error(error)
+      return
+    }
+    uploadCoverMutation.mutate(file)
+  }
+
+  const handleCoverRemove = () => {
+    if (!project?.cover_image_url) return
+    deleteCoverMutation.mutate()
+  }
+
+  const handleScreenshotPick = () => {
+    if (!project?.id) {
+      toast.error('请先保存作品信息')
+      return
+    }
+    if (uploadScreenshotMutation.isPending || deleteScreenshotMutation.isPending) return
+    screenshotInputRef.current?.click()
+  }
+
+  const handleScreenshotChange = (event) => {
+    const files = Array.from(event.target.files || [])
+    event.target.value = ''
+    if (files.length === 0) return
+    const error = files.map((file) => validateImageFile(file, PROJECT_SCREENSHOT_MAX_BYTES)).find(Boolean)
+    if (error) {
+      toast.error(error)
+      return
+    }
+    uploadScreenshotMutation.mutate(files)
+  }
+
+  const handleScreenshotRemove = (url) => {
+    if (!url) return
+    deleteScreenshotMutation.mutate(url)
+  }
 
   // 附件数据
   const attachments = submission?.attachments
@@ -552,23 +840,51 @@ export default function SubmitPage() {
     return { ok: true, message: '' }
   }, [token, registrationStatus, registration])
 
+  const canFinalize = useMemo(() => {
+    if (!token) return { ok: false, message: '请先登录后提交作品' }
+    if (registrationStatus === 'withdrawn') return { ok: false, message: '报名已撤回，无法提交作品' }
+    if (registrationStatus === 'none') return { ok: false, message: '请先完成比赛报名' }
+    if (!registration) return { ok: false, message: '请先完成比赛报名' }
+    if (registrationStatus !== 'approved') return { ok: false, message: '报名未审核通过，暂不可最终提交' }
+    return { ok: true, message: '' }
+  }, [token, registrationStatus, registration])
+
+  const canDeploy = useMemo(() => {
+    if (!token) return { ok: false, message: '请先登录后提交镜像' }
+    if (registrationStatus === 'withdrawn') return { ok: false, message: '报名已撤回，无法提交镜像' }
+    if (registrationStatus === 'none') return { ok: false, message: '请先完成比赛报名' }
+    if (!registration) return { ok: false, message: '请先完成比赛报名' }
+    if (registrationStatus !== 'approved') return { ok: false, message: '报名未审核通过，暂不可提交镜像部署' }
+    return { ok: true, message: '' }
+  }, [token, registrationStatus, registration])
+
+  const canEditImages = !!project?.id && !!token && canUseSubmission.ok && isEditable
+
   // 本地完整性检查
   const localChecklist = useMemo(() => {
     const trimmedTitle = String(form.title || '').trim()
     const repoOk = validateRepoUrl(form.repo_url).ok
     const docOk = !!String(form.project_doc_md || '').trim()
     const regOk = canUseSubmission.ok && (submission?.registration_id || registration?.id)
-    const demoOk = !!demoVideo?.is_uploaded
+    const demoOk = !demoVideo || !!demoVideo?.is_uploaded
     const apiOk = !!apiScreenshot?.is_uploaded && !!apiLog?.is_uploaded
     const titleOk = trimmedTitle.length >= 2
-    const allOk = repoOk && docOk && regOk && demoOk && apiOk && titleOk
+    const allOk = repoOk && docOk && regOk && apiOk && titleOk
 
     return { allOk, repoOk, docOk, regOk, demoOk, apiOk, titleOk }
   }, [form.repo_url, form.project_doc_md, form.title, canUseSubmission.ok, submission?.registration_id, registration?.id, demoVideo?.is_uploaded, apiScreenshot?.is_uploaded, apiLog?.is_uploaded])
 
+  const imageRefCheck = useMemo(() => {
+    const v = String(imageRef || '').trim()
+    if (!v) return { ok: false, message: '' }
+    return validateImageRef(v)
+  }, [imageRef])
+
   const saving = createDraftMutation.isPending || updateDraftMutation.isPending
   const validating = validateMutation.isPending
   const finalizing = finalizeMutation.isPending
+  const syncingProject = syncProjectMutation.isPending
+  const submittingImage = submitImageMutation.isPending
 
   // 确保有草稿（防止并发创建）
   const ensureDraft = async () => {
@@ -588,7 +904,7 @@ export default function SubmitPage() {
     }
 
     const createPromise = createDraftMutation.mutateAsync({
-      contest_id: CONTEST_ID,
+      contest_id: contestId,
       title,
       description: form.description || null,
       repo_url: form.repo_url.trim(),
@@ -626,7 +942,7 @@ export default function SubmitPage() {
 
       if (!submission?.id) {
         await createDraftMutation.mutateAsync({
-          contest_id: CONTEST_ID,
+          contest_id: contestId,
           title,
           description: form.description || null,
           repo_url: form.repo_url.trim(),
@@ -708,7 +1024,7 @@ export default function SubmitPage() {
 
       setUploadState((s) => ({ ...s, [type]: { uploading: false, progress: 100 } }))
       setValidateResult(null)
-      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', CONTEST_ID] })
+      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', contestId] })
       toast.success('上传完成')
     } catch (e) {
       setUploadState((s) => ({ ...s, [type]: { uploading: false, progress: 0 } }))
@@ -748,6 +1064,10 @@ export default function SubmitPage() {
   // 开始最终提交
   const startFinalize = async () => {
     try {
+      if (!canFinalize.ok) {
+        toast.warning(canFinalize.message)
+        return
+      }
       const draft = await ensureDraft()
       const res = await validateMutation.mutateAsync(draft.id)
       setValidateResult(res)
@@ -766,14 +1086,50 @@ export default function SubmitPage() {
   const confirmFinalize = async () => {
     try {
       if (!finalizeSubmissionId) return
+      if (!canFinalize.ok) {
+        toast.warning(canFinalize.message)
+        return
+      }
       await finalizeMutation.mutateAsync(finalizeSubmissionId)
       setFinalizeOpen(false)
       setFinalizeSubmissionId(null)
       toast.success('已最终提交，期待你的 C 位出道！')
-      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', CONTEST_ID] })
+      await queryClient.invalidateQueries({ queryKey: ['submission', 'mine', contestId] })
       navigate('/my-project')
     } catch (e) {
       toast.error(getErrorMessage(e))
+    }
+  }
+
+  const syncProjectInfo = async () => {
+    if (!token) {
+      toast.warning('请先登录后同步作品信息')
+      return
+    }
+    if (!canUseSubmission.ok) {
+      toast.warning(canUseSubmission.message)
+      return
+    }
+    try {
+      await syncProjectMutation.mutateAsync()
+    } catch {
+      // 错误由 onError 提示
+    }
+  }
+
+  const submitImageRef = async () => {
+    if (!token) {
+      toast.warning('请先登录后提交镜像')
+      return
+    }
+    if (!canDeploy.ok) {
+      toast.warning(canDeploy.message)
+      return
+    }
+    try {
+      await submitImageMutation.mutateAsync()
+    } catch {
+      // 错误由 onError 提示
     }
   }
 
@@ -828,7 +1184,7 @@ export default function SubmitPage() {
                 <button
                   type="button"
                   onClick={startFinalize}
-                  disabled={!isEditable || finalizing || mineQuery.isLoading}
+                  disabled={!isEditable || finalizing || mineQuery.isLoading || !canFinalize.ok}
                   className="inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold h-10 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/20 transition-all disabled:opacity-50 disabled:pointer-events-none"
                 >
                   {finalizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
@@ -886,8 +1242,297 @@ export default function SubmitPage() {
 
         {/* 主内容区 */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* 右侧操作区 */}
+          <div className="space-y-6 order-1 lg:order-2">
+            {/* 6. 镜像提交与部署 */}
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">6) 镜像提交与部署</h2>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  仅支持 ghcr.io / docker.io，必须使用 digest 形式（@sha256:）
+                </p>
+              </div>
+              <div className="p-6 space-y-4">
+                {!token && (
+                  <div className="text-sm text-slate-600 dark:text-slate-400">
+                    请先登录后提交镜像与查看部署状态
+                  </div>
+                )}
+                {token && registrationStatus !== 'approved' && (
+                  <div className="text-sm text-amber-600 dark:text-amber-400">
+                    报名审核通过后才可提交镜像部署
+                  </div>
+                )}
+
+                {token && projectQuery.isLoading && (
+                  <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    加载作品信息中...
+                  </div>
+                )}
+
+                {token && !projectQuery.isLoading && projectError && (
+                  <div className="text-sm text-amber-600 dark:text-amber-400">{projectError}</div>
+                )}
+
+                {token && !projectQuery.isLoading && !projectError && (
+                  <>
+                    {project ? (
+                      <div className="flex items-center gap-2 flex-wrap text-sm">
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-medium">
+                          作品ID：{project.id}
+                        </span>
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs font-medium">
+                          作品状态：{PROJECT_STATUS_LABELS[project.status] || '未知'}
+                        </span>
+                        {project.current_submission_id && (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 text-xs font-medium">
+                            线上提交：{project.current_submission_id}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4 space-y-3">
+                        <div className="text-sm text-slate-700 dark:text-slate-300">
+                          当前还没有作品信息，先同步作品信息后再提交镜像。
+                        </div>
+                        <button
+                          type="button"
+                          onClick={syncProjectInfo}
+                          disabled={syncingProject}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold h-10 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/20 transition-all disabled:opacity-50 disabled:pointer-events-none"
+                        >
+                          {syncingProject ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                          创建作品信息
+                        </button>
+                      </div>
+                    )}
+
+                    {project && (
+                      <>
+                        <div className="space-y-2">
+                          <label htmlFor="image_ref" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                            镜像引用（必填）
+                          </label>
+                          <input
+                            id="image_ref"
+                            value={imageRef}
+                            onChange={(e) => setImageRef(e.target.value)}
+                            placeholder="ghcr.io/owner/repo@sha256:..."
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                          />
+                          {!imageRefCheck.ok && imageRefCheck.message && (
+                            <p className="text-sm text-amber-600 dark:text-amber-400">{imageRefCheck.message}</p>
+                          )}
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            示例：ghcr.io/xxx/yyy@sha256:xxxxxxxx（必须是 digest，禁止仅 tag）
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={syncProjectInfo}
+                            disabled={syncingProject}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium h-10 px-4 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                          >
+                            {syncingProject ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                            同步作品信息
+                          </button>
+                          <button
+                            type="button"
+                            onClick={submitImageRef}
+                            disabled={submittingImage || !canDeploy.ok}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold h-10 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/20 transition-all disabled:opacity-50 disabled:pointer-events-none"
+                          >
+                            {submittingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                            提交镜像
+                          </button>
+                          {project?.id && (
+                            <Link
+                              to={`/projects/${project.id}/access`}
+                              className="inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium h-10 px-4 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                            >
+                              查看访问页
+                            </Link>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-slate-900 dark:text-white">部署状态</span>
+                            {latestProjectSubmission?.status ? (
+                              <DeployStatusBadge status={latestProjectSubmission.status} />
+                            ) : (
+                              <span className="text-xs text-slate-500 dark:text-slate-400">暂无记录</span>
+                            )}
+                          </div>
+                          {projectSubmissionError && (
+                            <div className="text-sm text-amber-600 dark:text-amber-400">{projectSubmissionError}</div>
+                          )}
+                          <div className="text-sm text-slate-600 dark:text-slate-400 space-y-1">
+                            <div>最近提交时间：{formatDateTime(latestProjectSubmission?.submitted_at)}</div>
+                            {latestProjectSubmission?.status_message && (
+                              <div>状态说明：{latestProjectSubmission.status_message}</div>
+                            )}
+                            {latestProjectSubmission?.error_code && (
+                              <div>错误码：{latestProjectSubmission.error_code}</div>
+                            )}
+                          </div>
+                          {projectAccessError && (
+                            <div className="text-sm text-amber-600 dark:text-amber-400">{projectAccessError}</div>
+                          )}
+                          <div className="flex items-center gap-2 flex-wrap pt-1">
+                            {projectAccessQuery.data?.domain ? (
+                              <a
+                                href={buildAccessUrl(projectAccessQuery.data.domain)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium h-9 px-3 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+                              >
+                                <ExternalLink className="w-4 h-4" />
+                                打开作品
+                              </a>
+                            ) : (
+                              <span className="text-xs text-slate-500 dark:text-slate-400">暂无访问链接</span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                projectSubmissionsQuery.refetch()
+                                projectAccessQuery.refetch()
+                              }}
+                              disabled={projectSubmissionsQuery.isFetching || projectAccessQuery.isFetching}
+                              className="inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium h-9 px-3 border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                            >
+                              {projectSubmissionsQuery.isFetching || projectAccessQuery.isFetching ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                '刷新状态'
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* 材料完整性检查 */}
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden lg:sticky lg:top-24">
+              <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">材料完整性</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  提交前请确保必填材料齐全（演示视频可选）
+                </p>
+              </div>
+              <div className="p-6 space-y-4">
+                <MaterialItem ok={localChecklist.titleOk} title="作品标题" desc="至少 2 个字符" />
+                <MaterialItem ok={localChecklist.repoOk} title="项目源码仓库" desc="GitHub/Gitee HTTPS URL" />
+                <MaterialItem ok={localChecklist.demoOk} title="演示视频（可选）" desc="MP4/AVI，3-5 分钟，≤1GB" />
+                <MaterialItem ok={localChecklist.docOk} title="项目文档" desc="Markdown 文本（最终提交必填）" />
+                <MaterialItem ok={localChecklist.apiOk} title="API 调用证明" desc="截图 + 日志（均需上传完成）" />
+                <MaterialItem ok={localChecklist.regOk} title="参赛报名表" desc="存在报名且未撤回" />
+
+                <div className="pt-2">
+                  <div
+                    className={cn(
+                      'rounded-xl border p-4',
+                      localChecklist.allOk
+                        ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20'
+                        : 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20'
+                    )}
+                  >
+                    <div className="flex items-center gap-2 font-semibold">
+                      {localChecklist.allOk ? (
+                        <>
+                          <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                          <span className="text-emerald-700 dark:text-emerald-300">本地检查：已齐全</span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertCircle className="w-5 h-5 text-amber-500" />
+                          <span className="text-amber-700 dark:text-amber-300">本地检查：未齐全</span>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">
+                      建议点击「材料检查」触发服务端校验，避免遗漏。
+                    </p>
+                  </div>
+                </div>
+
+                {validateResult && (
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-900 dark:text-white">服务端校验结果</span>
+                      <span
+                        className={cn(
+                          'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium',
+                          validateResult?.ok
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300'
+                        )}
+                      >
+                        {validateResult?.ok ? '通过' : '未通过'}
+                      </span>
+                    </div>
+                    {Array.isArray(validateResult?.errors) && validateResult.errors.length > 0 ? (
+                      <div className="mt-3 space-y-2">
+                        {validateResult.errors.slice(0, 6).map((e, idx) => (
+                          <div key={`${e.field || 'field'}_${idx}`} className="text-sm text-slate-700 dark:text-slate-300">
+                            <span className="font-medium">{e.field}</span>：{e.message}
+                          </div>
+                        ))}
+                        {validateResult.errors.length > 6 && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            还有 {validateResult.errors.length - 6} 项未展示
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">未发现问题</p>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={saveDraft}
+                    disabled={!token || !isEditable || saving}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium h-10 px-4 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    保存草稿
+                  </button>
+                  <button
+                    type="button"
+                    onClick={runValidate}
+                    disabled={!token || !isEditable || validating}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium h-10 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    {validating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                    材料检查（服务端）
+                  </button>
+                  <button
+                    type="button"
+                    onClick={startFinalize}
+                    disabled={!token || !isEditable || finalizing}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold h-10 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/20 transition-all disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    {finalizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    最终提交（需确认）
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* 左侧表单 */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="lg:col-span-2 space-y-6 order-2 lg:order-1">
             {/* 1. 项目源码 */}
             <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
@@ -978,13 +1623,154 @@ export default function SubmitPage() {
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed resize-none"
                   />
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      封面图（可选）
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        ref={coverInputRef}
+                        type="file"
+                        accept={IMAGE_ACCEPT}
+                        className="hidden"
+                        onChange={handleCoverChange}
+                        disabled={!canEditImages}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCoverPick}
+                        disabled={!canEditImages || uploadCoverMutation.isPending || deleteCoverMutation.isPending}
+                        className={cn(
+                          'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold transition-all h-10 px-4',
+                          !canEditImages || uploadCoverMutation.isPending || deleteCoverMutation.isPending
+                            ? 'opacity-50 pointer-events-none bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-500'
+                            : 'bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/20'
+                        )}
+                      >
+                        <Upload className="w-4 h-4" />
+                        {uploadCoverMutation.isPending ? '上传中...' : '上传封面'}
+                      </button>
+                      {project?.cover_image_url && (
+                        <button
+                          type="button"
+                          onClick={handleCoverRemove}
+                          disabled={!canEditImages || deleteCoverMutation.isPending || uploadCoverMutation.isPending}
+                          className={cn(
+                            'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-all h-10 px-3 border',
+                            !canEditImages || deleteCoverMutation.isPending || uploadCoverMutation.isPending
+                              ? 'opacity-50 pointer-events-none border-slate-200 text-slate-400 dark:border-slate-700'
+                              : 'border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          )}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          删除
+                        </button>
+                      )}
+                    </div>
+                    {project?.cover_image_url ? (
+                      <img
+                        src={project.cover_image_url}
+                        alt="作品封面"
+                        className="mt-3 w-full max-w-xs rounded-xl border border-slate-200 dark:border-slate-700 object-cover"
+                      />
+                    ) : (
+                      <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">未上传封面</div>
+                    )}
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      建议 16:9 比例，最大 5MB
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="readme_url" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      README 链接（可选）
+                    </label>
+                    <input
+                      id="readme_url"
+                      type="text"
+                      value={form.readme_url}
+                      onChange={(e) => setForm((s) => ({ ...s, readme_url: e.target.value }))}
+                      placeholder="https://raw.githubusercontent.com/.../README.md"
+                      disabled={!isEditable}
+                      className="w-full h-10 px-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      用于作品展示页的 README 入口
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    截图（可选）
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      ref={screenshotInputRef}
+                      type="file"
+                      accept={IMAGE_ACCEPT}
+                      className="hidden"
+                      multiple
+                      onChange={handleScreenshotChange}
+                      disabled={!canEditImages}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleScreenshotPick}
+                      disabled={!canEditImages || uploadScreenshotMutation.isPending || deleteScreenshotMutation.isPending}
+                      className={cn(
+                        'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold transition-all h-10 px-4',
+                        !canEditImages || uploadScreenshotMutation.isPending || deleteScreenshotMutation.isPending
+                          ? 'opacity-50 pointer-events-none bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-500'
+                          : 'bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/20'
+                      )}
+                    >
+                      <Upload className="w-4 h-4" />
+                      {uploadScreenshotMutation.isPending ? '上传中...' : '上传截图'}
+                    </button>
+                  </div>
+                  {Array.isArray(project?.screenshot_urls) && project.screenshot_urls.length > 0 ? (
+                    <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {project.screenshot_urls.map((url) => (
+                        <div key={url} className="relative group">
+                          <img
+                            src={url}
+                            alt="作品截图"
+                            className="w-full h-28 rounded-lg border border-slate-200 dark:border-slate-700 object-cover"
+                          />
+                          {canEditImages && (
+                            <button
+                              type="button"
+                              onClick={() => handleScreenshotRemove(url)}
+                              disabled={deleteScreenshotMutation.isPending}
+                              className={cn(
+                                'absolute top-2 right-2 inline-flex items-center justify-center rounded-full w-7 h-7 text-white text-xs shadow-md',
+                                deleteScreenshotMutation.isPending
+                                  ? 'opacity-60 bg-slate-400'
+                                  : 'bg-black/70 hover:bg-black/80'
+                              )}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">未上传截图</div>
+                  )}
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    支持多张截图，单张最大 5MB
+                  </p>
+                </div>
               </div>
             </div>
 
             {/* 2. 演示视频 */}
             <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
-                <h2 className="text-xl font-bold text-slate-900 dark:text-white">2) 演示视频（必填）</h2>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">2) 演示视频（可选）</h2>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
                   MP4/AVI，3-5 分钟，最大 1GB
                 </p>
@@ -1141,7 +1927,7 @@ pnpm i
                       )}
                     </div>
                     <p className="text-slate-500 dark:text-slate-400 mt-2">
-                      如未报名或报名已撤回，请先完成报名再提交作品。
+                      未报名或报名已撤回时无法提交作品；报名未审核通过前不可最终提交与部署。
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1160,116 +1946,8 @@ pnpm i
                       去参赛者中心
                     </Link>
                   </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 右侧材料完整性检查 */}
-          <div className="space-y-6">
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden sticky top-24">
-              <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">材料完整性</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  提交前请确保 5 种必填材料齐全
-                </p>
-              </div>
-              <div className="p-6 space-y-4">
-                <MaterialItem ok={localChecklist.titleOk} title="作品标题" desc="至少 2 个字符" />
-                <MaterialItem ok={localChecklist.repoOk} title="项目源码仓库" desc="GitHub/Gitee HTTPS URL" />
-                <MaterialItem ok={localChecklist.demoOk} title="演示视频" desc="MP4/AVI，3-5 分钟，≤1GB" />
-                <MaterialItem ok={localChecklist.docOk} title="项目文档" desc="Markdown 文本（最终提交必填）" />
-                <MaterialItem ok={localChecklist.apiOk} title="API 调用证明" desc="截图 + 日志（均需上传完成）" />
-                <MaterialItem ok={localChecklist.regOk} title="参赛报名表" desc="存在报名且未撤回" />
-
-                <div className="pt-2">
-                  <div className={cn(
-                    'rounded-xl border p-4',
-                    localChecklist.allOk
-                      ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20'
-                      : 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20'
-                  )}>
-                    <div className="flex items-center gap-2 font-semibold">
-                      {localChecklist.allOk ? (
-                        <>
-                          <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                          <span className="text-emerald-700 dark:text-emerald-300">本地检查：已齐全</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertCircle className="w-5 h-5 text-amber-500" />
-                          <span className="text-amber-700 dark:text-amber-300">本地检查：未齐全</span>
-                        </>
-                      )}
-                    </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">
-                      建议点击「材料检查」触发服务端校验，避免遗漏。
-                    </p>
                   </div>
                 </div>
-
-                {validateResult && (
-                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold text-slate-900 dark:text-white">服务端校验结果</span>
-                      <span className={cn(
-                        'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium',
-                        validateResult?.ok
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300'
-                          : 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300'
-                      )}>
-                        {validateResult?.ok ? '通过' : '未通过'}
-                      </span>
-                    </div>
-                    {Array.isArray(validateResult?.errors) && validateResult.errors.length > 0 ? (
-                      <div className="mt-3 space-y-2">
-                        {validateResult.errors.slice(0, 6).map((e, idx) => (
-                          <div key={`${e.field || 'field'}_${idx}`} className="text-sm text-slate-700 dark:text-slate-300">
-                            <span className="font-medium">{e.field}</span>：{e.message}
-                          </div>
-                        ))}
-                        {validateResult.errors.length > 6 && (
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            还有 {validateResult.errors.length - 6} 项未展示
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">未发现问题</p>
-                    )}
-                  </div>
-                )}
-
-                <div className="flex flex-col gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={saveDraft}
-                    disabled={!token || !isEditable || saving}
-                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium h-10 px-4 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:pointer-events-none"
-                  >
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    保存草稿
-                  </button>
-                  <button
-                    type="button"
-                    onClick={runValidate}
-                    disabled={!token || !isEditable || validating}
-                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium h-10 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:pointer-events-none"
-                  >
-                    {validating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                    材料检查（服务端）
-                  </button>
-                  <button
-                    type="button"
-                    onClick={startFinalize}
-                    disabled={!token || !isEditable || finalizing}
-                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold h-10 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/20 transition-all disabled:opacity-50 disabled:pointer-events-none"
-                  >
-                    {finalizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                    最终提交（需确认）
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -1284,7 +1962,7 @@ pnpm i
         />
 
         {/* 报名弹窗 */}
-        <RegistrationModal contestId={CONTEST_ID} />
+        <RegistrationModal contestId={contestId} />
       </div>
     </div>
   )

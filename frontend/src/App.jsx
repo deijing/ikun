@@ -12,6 +12,8 @@ import NotFoundPage from './pages/NotFoundPage'
 // 懒加载页面 - 按需加载
 const SubmissionsPage = lazy(() => import('./pages/SubmissionsPage'))
 const RankingPage = lazy(() => import('./pages/RankingPage'))
+const AnnouncementPage = lazy(() => import('./pages/AnnouncementPage'))
+const ReviewRankingDetailPage = lazy(() => import('./pages/ReviewRankingDetailPage'))
 const ParticipantsPage = lazy(() => import('./pages/ParticipantsPage'))
 const RegisterPage = lazy(() => import('./pages/RegisterPage'))
 const RoleGuidePage = lazy(() => import('./pages/RoleGuidePage'))
@@ -29,6 +31,10 @@ const MyBetsPage = lazy(() => import('./pages/MyBetsPage'))
 const TasksPage = lazy(() => import('./pages/TasksPage'))
 const CodeChallengePage = lazy(() => import('./pages/CodeChallengePage'))
 const PointsHistoryPage = lazy(() => import('./pages/PointsHistoryPage'))
+const ProjectAccessPage = lazy(() => import('./pages/ProjectAccessPage'))
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'))
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'))
+const AccountSecurityPage = lazy(() => import('./pages/AccountSecurityPage'))
 
 // 加载中组件
 function PageLoading() {
@@ -62,6 +68,8 @@ function App() {
             <Route index element={<HomePage />} />
             <Route path="submissions" element={<SubmissionsPage />} />
             <Route path="ranking" element={<RankingPage />} />
+            <Route path="ranking/review/:projectId" element={<ReviewRankingDetailPage />} />
+            <Route path="announcement" element={<AnnouncementPage />} />
             <Route path="participants" element={<ParticipantsPage />} />
             <Route path="submit" element={<SubmitPage />} />
             <Route path="achievements" element={<AchievementsPage />} />
@@ -73,6 +81,8 @@ function App() {
             <Route path="prediction/:id" element={<PredictionPage />} />
             <Route path="my-bets" element={<MyBetsPage />} />
             <Route path="my-project" element={<ContestantCenterPage />} />
+            <Route path="projects/:projectId/access" element={<ProjectAccessPage />} />
+            <Route path="account/security" element={<AccountSecurityPage />} />
             <Route path="admin/review" element={<AdminReviewPage />} />
             <Route path="admin/dashboard" element={<AdminDashboardPage />} />
             <Route path="admin/activity" element={<ActivityManagePage />} />
@@ -80,6 +90,8 @@ function App() {
           </Route>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/role-guide" element={<RoleGuidePage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>

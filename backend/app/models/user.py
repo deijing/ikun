@@ -82,3 +82,8 @@ class User(BaseModel):
     def is_spectator(self) -> bool:
         """是否为吃瓜用户"""
         return self.role == UserRole.SPECTATOR.value
+
+    @property
+    def has_password(self) -> bool:
+        """是否设置了本地密码"""
+        return bool(self.hashed_password)

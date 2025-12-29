@@ -20,6 +20,7 @@ import {
 import { useAuthStore } from '../stores/authStore'
 import { reviewCenterApi } from '../services'
 import { Badge } from '../components/ui/badge'
+import { resolveAvatarUrl } from '../utils/avatar'
 
 /**
  * 评审中心页面 - 评审员专属
@@ -30,12 +31,18 @@ import { Badge } from '../components/ui/badge'
  * 3. 筛选已评分/未评分作品
  * 4. 查看评分统计
  */
+function buildAccessUrl(domain) {
+  if (!domain) return ''
+  if (domain.startsWith('http://') || domain.startsWith('https://')) return domain
+  return `//${domain}`
+}
+
 export default function ReviewCenterPage() {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
 
   // 状态
-  const [submissions, setSubmissions] = useState([])
+  const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all') // all, yes, no
   const [stats, setStats] = useState(null)
@@ -68,11 +75,14 @@ export default function ReviewCenterPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [submissionsData, statsData] = await Promise.all([
-        reviewCenterApi.getSubmissions({ scored: filter !== 'all' ? filter : undefined }),
+      const [projectsData, statsData] = await Promise.all([
+        reviewCenterApi.getSubmissions({
+          scored: filter !== 'all' ? filter : undefined,
+          page_size: 100,
+        }),
         reviewCenterApi.getStats(),
       ])
-      setSubmissions(submissionsData.items || [])
+      setProjects(projectsData.items || [])
       setStats(statsData)
     } catch (error) {
       console.error('加载数据失败:', error)
@@ -233,16 +243,18 @@ export default function ReviewCenterPage() {
           <div className="flex items-center justify-center py-20">
             <RefreshCw className="w-8 h-8 animate-spin text-slate-400" />
           </div>
-        ) : submissions.length === 0 ? (
+        ) : projects.length === 0 ? (
           <div className="text-center py-20 text-slate-500">
             {filter === 'no' ? '没有未评分的作品' : filter === 'yes' ? '还没有评分记录' : '暂无待审作品'}
           </div>
         ) : (
           <div className="space-y-4">
-            {submissions.map((sub) => {
+            {projects.map((sub) => {
               const isExpanded = expandedId === sub.id
               const isScoring = scoringId === sub.id
               const hasReview = !!sub.my_review
+              const ownerName = sub.owner?.display_name || sub.owner?.username || '匿名'
+              const accessUrl = buildAccessUrl(sub.domain)
 
               return (
                 <div
@@ -257,16 +269,16 @@ export default function ReviewCenterPage() {
                     <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                       <div className="flex items-start gap-3 sm:gap-4">
                         <img
-                          src={sub.contestant?.avatar_url || `https://ui-avatars.com/api/?name=${sub.contestant?.username}`}
-                          alt={sub.contestant?.display_name}
+                          src={resolveAvatarUrl(sub.owner?.avatar_url)}
+                          alt={ownerName}
                           className="w-10 h-10 sm:w-12 sm:h-12 rounded-full flex-shrink-0"
                         />
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-slate-900 dark:text-white truncate text-sm sm:text-base">{sub.title}</h3>
                           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                            {sub.contestant?.display_name || sub.contestant?.username} ·
+                            {ownerName} ·
                             <span className="ml-1">
-                              {sub.submitted_at ? new Date(sub.submitted_at).toLocaleString() : '未提交'}
+                              {sub.created_at ? new Date(sub.created_at).toLocaleString() : '时间未知'}
                             </span>
                           </p>
                           {sub.description && (
@@ -318,15 +330,28 @@ export default function ReviewCenterPage() {
                       <div className="p-4 space-y-4">
                         {/* 项目链接 */}
                         <div className="flex flex-wrap gap-3">
-                          <a
-                            href={sub.repo_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                          >
-                            <ExternalLink className="w-4 h-4" />
-                            查看代码仓库
-                          </a>
+                          {sub.repo_url && (
+                            <a
+                              href={sub.repo_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                              查看代码仓库
+                            </a>
+                          )}
+                          {accessUrl && (
+                            <a
+                              href={accessUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg text-sm text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                              访问作品
+                            </a>
+                          )}
                           {sub.demo_url && (
                             <a
                               href={sub.demo_url}

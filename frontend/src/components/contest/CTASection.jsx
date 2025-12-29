@@ -8,9 +8,9 @@ import { RegistrationModal, PreparationGuideModal } from '../registration'
 /**
  * CTA 行动号召区组件
  */
-export default function CTASection() {
+export default function CTASection({ contestPhase, contestId }) {
   // 当前比赛 ID（后续可从 props 或 context 获取）
-  const contestId = 1
+  const resolvedContestId = contestId ?? 1
 
   // 认证状态
   const token = useAuthStore((s) => s.token)
@@ -32,17 +32,22 @@ export default function CTASection() {
   // 登录后检查报名状态（仅参赛者需要检查）
   useEffect(() => {
     if (!token || !isContestant) return
-    checkStatus(contestId).catch(() => {})
-  }, [token, isContestant, checkStatus])
+    checkStatus(resolvedContestId).catch(() => {})
+  }, [token, isContestant, checkStatus, resolvedContestId])
 
   // 是否可以编辑（参赛者角色、已报名且未撤回）
   const canEdit = token && isContestant && registration && status !== 'withdrawn' && status !== 'none'
+  const isRetireAction = !!contestPhase && contestPhase !== 'signup' && status === 'approved'
+  const withdrawLabel = isRetireAction ? '退赛' : '撤回报名'
+  const withdrawConfirmMessage = isRetireAction
+    ? '确定要退赛吗？退赛后将自动下线部署并删除运行容器，作品不再在公示/展示/投票中出现，且无法再报名。'
+    : '确定要撤回报名吗？撤回后将自动下线部署并删除运行容器，作品不再在公示/展示/投票中出现，可在报名期重新报名。'
 
   // 撤回报名
   const handleWithdraw = async () => {
-    if (!window.confirm('确定要撤回报名吗？撤回后可以重新报名。')) return
+    if (!window.confirm(withdrawConfirmMessage)) return
     try {
-      await withdraw(contestId)
+      await withdraw(resolvedContestId)
     } catch {
       // 错误由 store 处理
     }
@@ -111,7 +116,7 @@ export default function CTASection() {
                   className="px-6 py-4 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/30 border border-red-200 dark:border-red-700 text-red-700 dark:text-red-300 rounded-lg font-bold flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <XCircle className="mr-2 w-5 h-5" />
-                  撤回报名
+                  {withdrawLabel}
                 </button>
               )}
             </div>
@@ -146,7 +151,7 @@ export default function CTASection() {
       <PreparationGuideModal />
 
       {/* 报名弹窗 */}
-      <RegistrationModal contestId={contestId} />
+      <RegistrationModal contestId={resolvedContestId} />
     </section>
   )
 }

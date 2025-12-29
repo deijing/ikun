@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Heart, Coffee, Zap, Pizza, Star, MessageCircle, Sparkles, RefreshCw, ChevronLeft, ChevronRight, GitCommit, Plus, Minus, Code2, Crown, Gift, Key } from 'lucide-react'
 import api from '../../services/api'
 import { cn } from '@/lib/utils'
+import { resolveAvatarUrl } from '@/utils/avatar'
 
 /**
  * 打气类型配置
@@ -57,7 +58,7 @@ function CheerFeedItem({ item }) {
     <div className="flex items-start gap-3 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
       {/* 头像 */}
       <img
-        src={fromUser?.avatar_url || `https://ui-avatars.com/api/?name=${fromUser?.username || 'U'}`}
+        src={resolveAvatarUrl(fromUser?.avatar_url)}
         alt={fromUser?.display_name || fromUser?.username}
         className="w-10 h-10 rounded-full flex-shrink-0"
       />
@@ -108,7 +109,7 @@ function CommitFeedItem({ item }) {
     <div className="flex items-start gap-3 p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
       {/* 头像 */}
       <img
-        src={user?.avatar_url || `https://ui-avatars.com/api/?name=${user?.username || 'U'}`}
+        src={resolveAvatarUrl(user?.avatar_url)}
         alt={user?.display_name || user?.username}
         className="w-10 h-10 rounded-full flex-shrink-0"
       />
@@ -173,7 +174,7 @@ function WinnerFeedItem({ item, index }) {
       {/* 头像带皇冠 */}
       <div className="relative flex-shrink-0">
         <img
-          src={item.avatar_url || `https://ui-avatars.com/api/?name=${item.username || 'U'}`}
+          src={resolveAvatarUrl(item.avatar_url)}
           alt={item.display_name || item.username}
           className="w-10 h-10 rounded-full"
         />
@@ -245,7 +246,7 @@ function TabButton({ active, onClick, icon: Icon, children, color }) {
 /**
  * 实时动态流组件 - 分页轮播版 + Tab 切换
  */
-export default function LiveFeedSection() {
+export default function LiveFeedSection({ contestId }) {
   const [activeTab, setActiveTab] = useState('cheers') // 'cheers' | 'commits' | 'winners'
   const [feeds, setFeeds] = useState([])
   const [commits, setCommits] = useState([])
@@ -257,11 +258,12 @@ export default function LiveFeedSection() {
 
   // 加载应援动态
   const loadCheers = async (isRefresh = false) => {
+    if (!contestId) return
     if (isRefresh) setRefreshing(true)
     else setLoading(true)
 
     try {
-      const response = await api.get('/contests/1/cheers/today', {
+      const response = await api.get(`/contests/${contestId}/cheers/today`, {
         params: { limit: ITEMS_PER_PAGE * TOTAL_PAGES }
       })
       setFeeds(response.items || [])
@@ -275,11 +277,12 @@ export default function LiveFeedSection() {
 
   // 加载提交动态
   const loadCommits = async (isRefresh = false) => {
+    if (!contestId) return
     if (isRefresh) setRefreshing(true)
     else setLoading(true)
 
     try {
-      const response = await api.get('/contests/1/github-commits/recent', {
+      const response = await api.get(`/contests/${contestId}/github-commits/recent`, {
         params: { limit: ITEMS_PER_PAGE * TOTAL_PAGES }
       })
       setCommits(response.items || [])
@@ -311,6 +314,7 @@ export default function LiveFeedSection() {
 
   // 刷新当前 Tab 数据
   const refreshData = useCallback((isRefresh = false) => {
+    if (!contestId) return
     if (activeTab === 'cheers') {
       loadCheers(isRefresh)
     } else if (activeTab === 'commits') {
@@ -318,7 +322,7 @@ export default function LiveFeedSection() {
     } else {
       loadWinners(isRefresh)
     }
-  }, [activeTab])
+  }, [activeTab, contestId])
 
   // 初始加载和自动刷新
   useEffect(() => {
@@ -327,7 +331,7 @@ export default function LiveFeedSection() {
     // 每30秒自动刷新数据
     const interval = setInterval(() => refreshData(true), 30000)
     return () => clearInterval(interval)
-  }, [activeTab])
+  }, [activeTab, refreshData])
 
   // Tab 切换时重置页码
   useEffect(() => {

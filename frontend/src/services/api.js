@@ -1,8 +1,9 @@
 import axios from 'axios'
 import { useAuthStore } from '../stores/authStore'
+import { getApiBaseUrl } from '../lib/apiBaseUrl'
 
-// 生产环境使用相对路径（nginx 会代理到后端），开发环境使用完整 URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1'
+// 统一处理 API 基地址，避免 HTTPS 页面触发 Mixed Content
+const API_BASE_URL = getApiBaseUrl()
 
 /**
  * Axios 实例
@@ -18,6 +19,14 @@ const api = axios.create({
 // 请求拦截器 - 添加 Token
 api.interceptors.request.use(
   (config) => {
+    if (typeof window !== 'undefined' && window.location?.protocol === 'https:') {
+      if (typeof config.baseURL === 'string' && config.baseURL.startsWith('http://')) {
+        config.baseURL = config.baseURL.replace('http://', 'https://')
+      }
+      if (typeof config.url === 'string' && config.url.startsWith('http://')) {
+        config.url = config.url.replace('http://', 'https://')
+      }
+    }
     const token = useAuthStore.getState().token
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
